@@ -34,11 +34,15 @@ class PacketDecoders {
         const r = m.HEAPU32.subarray(this.result / 4, this.result / 4 + 26);
         if (r[0] !== 1) throw Error('Unsupported decoder ABI');
         const bytes = m.HEAPU8;
-        return {phy:r[1], rate_half_mbps:r[2], mcs:r[3], stbc:r[4], frame_start:r[5],
+        if (r[1] >= 100) return {protocol:'ble', phy:r[1]-100, identity_valid:!!(r[12]&1),
+            crc_checked:!!(r[12]&2), crc_valid:!!(r[12]&4),
+            prefix:bytes.slice(this.result+64,this.result+64+r[13]),
+            access_address:r[14], packet_crc:r[15]};
+        return {protocol:'wifi', phy:r[1], rate_half_mbps:r[2], mcs:r[3], stbc:r[4], frame_start:r[5],
             training_start:r[6], training_words:r[7], length_bytes:r[8], duration_us:r[9],
             cfo_hz:r[10]|0, quality:r[11], mac_valid:!!(r[12]&1), crc_checked:!!(r[12]&2),
             crc_valid:!!(r[12]&4), prefix:bytes.slice(this.result+64,this.result+64+r[13]),
-            access_address:r[14], packet_crc:r[15], transmitter:bytes.slice(this.result+96,this.result+102)};
+            transmitter:bytes.slice(this.result+96,this.result+102)};
     }
     wifi(iq, {stage = 'full', training_hint = 0} = {}) {
         const stages = {full:0, training:1, extended_header:2, native_ofdm:3, native_dsss:4};

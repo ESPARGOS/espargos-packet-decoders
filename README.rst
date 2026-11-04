@@ -52,7 +52,10 @@ without decoding the header again. ``wifi(iq)`` performs bounded full decoding.
 ``ble(iq, sample_rate=4000000, phy=0, channel=37)`` qualifies BLE. Input can be an
 iterable of packed uint32 samples or native-endian packed bytes. Results are
 Python dictionaries, or None on failed qualification. ``crc_checked`` is
-independent of ``crc_valid``. The binding releases the GIL while decoding.
+independent of ``crc_valid``. Results name their ``protocol``. BLE
+``identity_valid`` means a decoded access address and header; WiFi
+``mac_valid`` means a recovered transmitter MAC. The binding releases the GIL
+while decoding.
 
 WebAssembly (Emscripten required)::
 

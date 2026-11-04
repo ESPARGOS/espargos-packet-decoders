@@ -45,9 +45,10 @@ class BindingTests(unittest.TestCase):
         for test, actual in zip(cases, results, strict=True):
             expected = (wifi if test['kind']=='wifi' else ble)(test['iq'], **test['options'])
             if expected:
-                for field in ['prefix', 'transmitter']: expected[field] = list(expected[field])
+                for field in ['prefix', 'transmitter']:
+                    if field in expected: expected[field] = list(expected[field])
             # Different libm implementations may round CFO by 1 Hz.
-            if expected and actual:
+            if expected and actual and 'cfo_hz' in expected:
                 self.assertLessEqual(abs(actual['cfo_hz'] - expected['cfo_hz']), 1, test['name'])
                 actual['cfo_hz'] = expected['cfo_hz']
             self.assertEqual(actual, expected, test['name'])

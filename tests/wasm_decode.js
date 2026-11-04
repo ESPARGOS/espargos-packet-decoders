@@ -8,7 +8,7 @@ const fs = require('fs'), path = require('path');
     const results = cases.map(test => {
         const iq = Uint32Array.from(test.iq);
         const r = decoder[test.kind](iq, test.options);
-        if (r) for (const field of ['prefix', 'transmitter']) r[field] = Array.from(r[field]);
+        if (r) for (const field of ['prefix', 'transmitter']) if (r[field]) r[field] = Array.from(r[field]);
         return r;
     });
     decoder.destroy();

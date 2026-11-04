@@ -23,12 +23,16 @@ def _result(raw):
     v = struct.unpack('=26I', raw)
     if v[0] != 1:
         raise RuntimeError('Unsupported decoder ABI')
-    return dict(phy=v[1], rate_half_mbps=v[2], mcs=v[3], stbc=v[4],
+    if v[1] >= 100:
+        return dict(protocol='ble', phy=v[1]-100, identity_valid=bool(v[12]&1),
+                    crc_checked=bool(v[12]&2), crc_valid=bool(v[12]&4),
+                    prefix=raw[64:64+v[13]], access_address=v[14], packet_crc=v[15])
+    return dict(protocol='wifi', phy=v[1], rate_half_mbps=v[2], mcs=v[3], stbc=v[4],
                 frame_start=v[5], training_start=v[6], training_words=v[7],
                 length_bytes=v[8], duration_us=v[9],
                 cfo_hz=struct.unpack('=i', raw[40:44])[0], quality=v[11],
                 mac_valid=bool(v[12]&1), crc_checked=bool(v[12]&2), crc_valid=bool(v[12]&4),
-                prefix=raw[64:64+v[13]], access_address=v[14], packet_crc=v[15],
+                prefix=raw[64:64+v[13]],
                 transmitter=raw[96:102])
 
 def wifi(iq, *, stage='full', training_hint=0):
