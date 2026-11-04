@@ -31,7 +31,14 @@ static cf add(cf a, cf b) { return (cf){a.r + b.r, a.i + b.i}; }
 static cf mul(cf a, cf b) { return (cf){a.r * b.r - a.i * b.i, a.r * b.i + a.i * b.r}; }
 static cf conjugate(cf a) { return (cf){a.r, -a.i}; }
 static float power(cf a) { return a.r * a.r + a.i * a.i; }
-static unsigned parity(unsigned x) { return __builtin_parity(x); }
+static unsigned parity(unsigned x) {
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_parity(x);
+#else
+    x ^= x >> 16; x ^= x >> 8; x ^= x >> 4;
+    return (0x6996u >> (x & 15)) & 1;
+#endif
+}
 
 static void fft(cf *x) {
     for (unsigned i = 1, j = 0; i < 64; i++) {
@@ -952,6 +959,18 @@ bool epd_wifi_qualify_native(const uint32_t *samples, uint32_t words, bool dsss,
                                int training_hint, void *scratch, epd_wifi_packet_t *packet) {
     if (!dsss) {
         if (training_hint < -64 || training_hint > (int)words) return false;
+        /* Native timing usually locates the L-LTF closely. Try that bounded
+         * neighborhood first with the same waveform checks; retain the wider
+         * search for unusual recorder/timestamp alignment. */
+        unsigned near_begin = training_hint > 32 ? training_hint - 32 : 0;
+        unsigned near_end = training_hint + 32 + 128;
+        if (near_end > words) near_end = words;
+        if (near_end >= near_begin + 128 &&
+            qualify(samples, words, near_begin, near_end-near_begin, scratch, packet, true, true, false)) {
+            packet->training_start += near_begin;
+            packet->frame_start = packet->training_start >= 192 ? packet->training_start - 192 : UINT16_MAX;
+            return true;
+        }
         unsigned begin = training_hint > 192 ? training_hint - 192 : 0;
         unsigned end = training_hint + 192 + 128;
         if (end > words) end = words;

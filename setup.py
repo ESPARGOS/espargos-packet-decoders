@@ -1,3 +1,4 @@
+import sys
 from setuptools import Extension, setup, find_packages
 setup(name='espargos-packet-decoders', version='0.1.0',
       description='Portable C WiFi and BLE IQ packet decoders',
@@ -5,4 +6,4 @@ setup(name='espargos-packet-decoders', version='0.1.0',
       packages=find_packages('python'), package_dir={'': 'python'},
       ext_modules=[Extension('espargos_packet_decoders._native',
           sources=['bindings/python.c', 'bindings/bridge.c', 'src/wifi.c', 'src/ble.c'],
-          include_dirs=['include', 'bindings'], libraries=['m'], extra_compile_args=['-std=c99'])])
+          include_dirs=['include', 'bindings'], libraries=[] if sys.platform == 'win32' else ['m'], extra_compile_args=['-std=c99'])])
