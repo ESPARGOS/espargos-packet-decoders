@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Build browser/Node artifacts with Emscripten; output directory is the argument."""
 from pathlib import Path
+import json
 import shutil
 import subprocess
 import sys
@@ -16,3 +17,11 @@ subprocess.run(['emcc', '-O3', '-std=c99', '-I'+str(root/'include'),
     '-sEXPORTED_FUNCTIONS=["_malloc","_free","_epd_workspace_size","_epd_decode_wifi","_epd_decode_ble"]',
     '-o', str(out/'epd.js')], check=True)
 shutil.copyfile(root/'bindings/packet_decoders.js', out/'packet_decoders.js')
+
+for name in ('COPYING', 'COPYING.LESSER'):
+    shutil.copyfile(root/name, out/name)
+try:
+    revision = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
+except (OSError, subprocess.CalledProcessError):
+    revision = None
+(out/'source.json').write_text(json.dumps({'revision':revision, 'license':'LGPL-3.0-or-later'}, indent=2)+'\n')
