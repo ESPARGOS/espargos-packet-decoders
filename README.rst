@@ -76,5 +76,6 @@ native Python and WebAssembly results on identical samples. CFO may differ by
 one hertz due to libm rounding; decoded bytes and validation flags must agree.
 
 The API is initial and not yet a stable binary ABI. Rebuild consumers when
-updating the submodule. No package or repository publication is implied by a
-local build.
+updating the submodule. This repository is currently local and unpublished by user choice. Consumer
+submodules point at the local development checkout; supply it locally before
+initializing them on another machine.
