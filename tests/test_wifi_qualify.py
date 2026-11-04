@@ -174,6 +174,15 @@ class WiFiQualificationTests(unittest.TestCase):
                     self.assertTrue(fn(window.ctypes.data_as(C.POINTER(C.c_uint32)),
                                        len(window), dsss, original.training_start-begin,
                                        self.scratch, C.byref(p)), name)
+                    if not dsss:
+                        for shift in (-96, 96):
+                            fallback = Packet()
+                            self.assertTrue(fn(window.ctypes.data_as(C.POINTER(C.c_uint32)),
+                                               len(window), False, original.training_start-begin+shift,
+                                               self.scratch, C.byref(fallback)), (name, shift))
+                            self.assertLessEqual(fallback.training_start+fallback.training_words, len(window))
+                            self.assertFalse(fallback.mac_valid)
+                            self.assertFalse(fallback.crc_checked)
                     self.assertFalse(p.mac_valid, name)
                     self.assertFalse(p.crc_checked, name)
                     self.assertLess(abs(p.cfo_hz-original.cfo_hz), 2000, name)
