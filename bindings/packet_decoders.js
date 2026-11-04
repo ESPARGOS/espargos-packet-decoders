@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+/* Reusable synchronous decoder after asynchronous WASM loading. IQ input is
+ * Uint32Array in ESPARGOS tap convention; results use the same fields as Python. */
+class PacketDecoders {
+    static async create(options = {}) {
+        const factory = typeof createEPDModule === 'function' ? createEPDModule : require('./epd.js');
+        return new PacketDecoders(await factory(options));
+    }
+    constructor(module) {
+        this.module = module;
+        this.iq = module._malloc(16384 * 4);
+        this.work = module._malloc(module._epd_workspace_size());
+        this.result = module._malloc(104);
+        if (!this.iq || !this.work || !this.result) {
+            this.destroy();
+            throw Error('Cannot allocate decoder workspace');
+        }
+    }
+    destroy() {
+        for (const key of ['iq', 'work', 'result']) {
+            if (this[key]) this.module._free(this[key]);
+            this[key] = 0;
+        }
+    }
+    decode(iq, kind, a, b, c = 0) {
+        if (!this.work) throw Error('Decoder has been destroyed');
+        if (!(iq instanceof Uint32Array) || !iq.length || iq.length > 16384)
+            throw RangeError('Expected 1..16384 packed uint32 IQ samples');
+        const m = this.module;
+        m.HEAPU32.set(iq, this.iq / 4);
+        const valid = kind === 0 ? m._epd_decode_wifi(this.iq, iq.length, a, b, this.work, this.result)
+            : m._epd_decode_ble(this.iq, iq.length, a, b, c, this.work, this.result);
+        if (!valid) return null;
+        const r = m.HEAPU32.subarray(this.result / 4, this.result / 4 + 26);
+        if (r[0] !== 1) throw Error('Unsupported decoder ABI');
+        const bytes = m.HEAPU8;
+        return {phy:r[1], rate_half_mbps:r[2], mcs:r[3], stbc:r[4], frame_start:r[5],
+            training_start:r[6], training_words:r[7], length_bytes:r[8], duration_us:r[9],
+            cfo_hz:r[10]|0, quality:r[11], mac_valid:!!(r[12]&1), crc_checked:!!(r[12]&2),
+            crc_valid:!!(r[12]&4), prefix:bytes.slice(this.result+64,this.result+64+r[13]),
+            access_address:r[14], packet_crc:r[15], transmitter:bytes.slice(this.result+96,this.result+102)};
+    }
+    wifi(iq, {stage = 'full', training_hint = 0} = {}) {
+        const stages = {full:0, training:1, extended_header:2, native_ofdm:3, native_dsss:4};
+        if (!(stage in stages)) throw RangeError('Unknown WiFi decoder stage');
+        return this.decode(iq, 0, stages[stage], training_hint);
+    }
+    ble(iq, {sample_rate = 4000000, phy = 0, channel = 37} = {}) {
+        return this.decode(iq, 1, sample_rate, phy, channel);
+    }
+}
+if (typeof module !== 'undefined') module.exports = PacketDecoders;

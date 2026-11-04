@@ -1,0 +1,4 @@
+include COPYING COPYING.LESSER
+recursive-include include *.h
+recursive-include src *.h *.c
+recursive-include bindings *.h *.c
