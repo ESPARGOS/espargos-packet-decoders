@@ -1183,6 +1183,7 @@ bool epd_wifi_qualify_dsss_training(const uint32_t *samples, unsigned words, int
                                   void *scratch, epd_wifi_packet_t *packet) {
     if (!epd_wifi_qualify_native(samples, words, true, hint, scratch, packet)) return false;
     double matched = 0, total = 0, template_power = 0;
+    int64_t sum_i = 0, sum_q = 0;
     for (unsigned k = 0; k < 20; k++) template_power += wifi_barker20[k] * wifi_barker20[k];
     for (unsigned s = 0; s < packet->training_words; s += 20) {
         double r = 0, q = 0, energy = 0;
@@ -1190,11 +1191,17 @@ bool epd_wifi_qualify_dsss_training(const uint32_t *samples, unsigned words, int
             uint32_t raw = samples[packet->training_start + s + k];
             int i = (int)((raw & 1023) ^ 512) - 512;
             int j = (int)(((raw >> 10) & 1023) ^ 512) - 512;
+            sum_i += i; sum_q += j;
             r += i * wifi_barker20[k]; q += j * wifi_barker20[k];
             energy += i*i + j*j;
         }
         matched += r*r + q*q;
         total += energy * template_power;
     }
+    /* The zero-sum Barker template removes DC in the numerator. Normalize
+     * against AC energy as well: high receiver gain can produce a large DC
+     * offset which is not evidence against otherwise valid training. */
+    total -= ((double)sum_i * sum_i + (double)sum_q * sum_q) *
+             template_power / packet->training_words;
     return total > 0 && matched > .55 * total;
 }

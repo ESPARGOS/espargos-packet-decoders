@@ -299,6 +299,49 @@ class WiFiQualificationTests(unittest.TestCase):
             p = Packet()
             self.assertEqual(fn(iq.ctypes.data_as(C.POINTER(C.c_uint32)), len(iq), 100, self.scratch, C.byref(p)), expected)
 
+    def test_barker_training_is_invariant_to_unclipped_dc(self):
+        fn = self.lib.epd_wifi_qualify_dsss_training
+        fn.argtypes = [C.POINTER(C.c_uint32), C.c_uint, C.c_int, C.c_void_p, C.POINTER(Packet)]
+        fn.restype = C.c_bool
+        wave = resample_poly(phy.synthesize_dsss(phy.make_probe_request(), 1), 20, 11)[200:1224]
+        wave *= np.exp(2j*np.pi*18000*np.arange(len(wave))/20e6)
+        wave *= 40 / max(abs(wave))
+        rng = np.random.default_rng(503)
+        for noise in (0, 2):
+            z = wave + noise*(rng.normal(size=len(wave)) + 1j*rng.normal(size=len(wave)))
+            anchors = []
+            for dc in (0, 400+70j, -400-120j):
+                iq = ((np.rint((z+dc).real).astype('i4') & 1023) |
+                      ((np.rint(-(z+dc).imag).astype('i4') & 1023) << 10)).astype('u4')
+                p = Packet()
+                self.assertTrue(fn(iq.ctypes.data_as(C.POINTER(C.c_uint32)), len(iq), 100, self.scratch, C.byref(p)), (noise, dc))
+                anchors.append((p.training_start, p.training_words, p.cfo_hz))
+                self.assertFalse(p.mac_valid or p.crc_checked or p.crc_valid)
+            self.assertEqual(anchors, [anchors[0]] * len(anchors))
+        # DC subtraction must not turn a biased noise floor or CW into training.
+        for frequency in np.linspace(-.48, .48, 49):
+            z = 35*np.exp(2j*np.pi*frequency*np.arange(1024)) + 400+70j
+            iq = ((np.rint(z.real).astype('i4') & 1023) |
+                  ((np.rint(-z.imag).astype('i4') & 1023) << 10)).astype('u4')
+            p = Packet()
+            self.assertFalse(fn(iq.ctypes.data_as(C.POINTER(C.c_uint32)), len(iq), 100, self.scratch, C.byref(p)), frequency)
+        for _ in range(64):
+            z = 400+70j + 20*(rng.normal(size=1024)+1j*rng.normal(size=1024))
+            iq = ((np.rint(z.real).astype('i4') & 1023) |
+                  ((np.rint(-z.imag).astype('i4') & 1023) << 10)).astype('u4')
+            p = Packet()
+            self.assertFalse(fn(iq.ctypes.data_as(C.POINTER(C.c_uint32)), len(iq), 100, self.scratch, C.byref(p)))
+
+    def test_real_high_gain_barker_with_dc(self):
+        iq = np.fromfile(ROOT/'tests/fixtures/wifi_barker_dc.bin', dtype='<u4')
+        fn = self.lib.epd_wifi_qualify_dsss_training
+        fn.argtypes = [C.POINTER(C.c_uint32), C.c_uint, C.c_int, C.c_void_p, C.POINTER(Packet)]
+        fn.restype = C.c_bool
+        p = Packet()
+        self.assertTrue(fn(iq.ctypes.data_as(C.POINTER(C.c_uint32)), len(iq), 800, self.scratch, C.byref(p)))
+        self.assertEqual(p.phy, 1)
+        self.assertFalse(p.mac_valid or p.crc_checked or p.crc_valid)
+
     def test_11b_headers_all_rates(self):
         for rate in (1, 2, 5.5, 11):
             waveform = resample_poly(phy.synthesize_dsss(phy.make_probe_request(), rate), 20, 11)
