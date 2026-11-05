@@ -65,6 +65,16 @@ class SymbolsTests(unittest.TestCase):
             self.assertEqual(actual['rate'],expected['rate'])
             np.testing.assert_allclose([complex(p['re'],p['im']) for p in actual['points']],expected['points'],atol=.004)
 
+    def test_recorded_cck_chips(self):
+        with np.load(ROOT/'tests/fixtures/wifi_cck_iq.npz') as captures:
+            for name, iq in captures.items():
+                result = dsss_symbols(iq)
+                points = np.array(result['points'])
+                self.assertGreater(len(points), 100, name)
+                self.assertIn(result['rate'], (5.5,11))
+                error = np.sqrt(np.mean(np.min(abs(points[:,None]-np.array([1,1j,-1,-1j]))**2,axis=1)))
+                self.assertLess(error, .5, name)
+
     def test_bounds_and_noise(self):
         noise = np.random.default_rng(91).integers(0,1<<20,2048,dtype=np.uint32)
         self.assertFalse(dsss_symbols(noise)['points'])

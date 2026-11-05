@@ -1069,10 +1069,16 @@ unsigned epd_wifi_dsss_symbols(const uint32_t *samples, unsigned words, unsigned
     if (!samples || !scratch || !out || !rate || !capacity || words > MAX_WORDS ||
         kind > 1 || words < 200) return 0;
     workspace_t *w = scratch;
+    // Crops can start inside SYNC. Leave search/descrambler history before
+    // the real samples; no returned point is taken from this idle padding.
+    unsigned pad = kind == 0 && words <= MAX_WORDS - 400 ? 400 : 0;
+    memset(w->i, 0, pad * sizeof(w->i[0]));
+    memset(w->q, 0, pad * sizeof(w->q[0]));
     for (unsigned n = 0; n < words; n++) {
-        w->i[n] = ((samples[n] & 1023) ^ 512) - 512;
-        w->q[n] = -((int)(((samples[n] >> 10) & 1023) ^ 512) - 512);
+        w->i[n + pad] = ((samples[n] & 1023) ^ 512) - 512;
+        w->q[n + pad] = -((int)(((samples[n] >> 10) & 1023) ^ 512) - 512);
     }
+    words += pad;
     unsigned start, end;
     if (kind == 0) {
         epd_wifi_packet_t p;
@@ -1143,6 +1149,26 @@ unsigned epd_wifi_dsss_symbols(const uint32_t *samples, unsigned words, unsigned
             cf a = cck_filter(w, n, weights), b = cck_filter(w, n+1, weights);
             cf z = mul((cf){a.r + f*(b.r-a.r), a.i + f*(b.i-a.i)}, carrier);
             out[2*count] = z.r; out[2*count+1] = z.i; count++;
+        }
+    }
+    if (*rate > 4 && count) {
+        // CCK has no payload pilots. Estimate one common residual carrier
+        // phase from the fourth moment; retain the harmless quadrant ambiguity.
+        // Never rotate individual decision points.
+        cf fourth = {0};
+        for (unsigned n = 0; n < count; n++) {
+            cf z = {out[2*n], out[2*n+1]};
+            float e = power(z);
+            if (e > 1e-12f) {
+                cf square = mul(z,z), x = mul(square,square);
+                fourth.r += x.r/(e*e); fourth.i += x.i/(e*e);
+            }
+        }
+        float angle = -atan2f(fourth.i, fourth.r)/4;
+        cf correction = {cosf(angle), sinf(angle)};
+        for (unsigned n = 0; n < count; n++) {
+            cf z = mul((cf){out[2*n],out[2*n+1]},correction);
+            out[2*n] = z.r; out[2*n+1] = z.i;
         }
     }
     float energy = 0;
