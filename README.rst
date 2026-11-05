@@ -79,6 +79,10 @@ native Python and WebAssembly results on identical samples. CFO may differ by
 one hertz due to libm rounding; decoded bytes and validation flags must agree.
 
 The API is initial and not yet a stable binary ABI. Rebuild consumers when
-updating the submodule. This repository is currently local and unpublished by user choice. Consumer
-submodules point at the local development checkout; supply it locally before
-initializing them on another machine.
+updating the submodule.
+
+The source repository is https://github.com/ESPARGOS/espargos-packet-decoders.
+Consumers pin it as a Git submodule. After cloning a consuming project, run
+``git submodule update --init --recursive`` to fetch its pinned dependencies.
+For an existing checkout whose submodule URL has changed, first run
+``git submodule sync --recursive``.
