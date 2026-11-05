@@ -12,7 +12,7 @@ import tempfile
 import unittest
 import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT/'python'))
+sys.path.insert(0, os.environ.get('EPD_PYTHON_DIR', str(ROOT/'python')))
 from espargos_packet_decoders import wifi, ble
 from test_ble_qualify import waveform
 

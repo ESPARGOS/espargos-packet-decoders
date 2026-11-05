@@ -86,3 +86,22 @@ Consumers pin it as a Git submodule. After cloning a consuming project, run
 ``git submodule update --init --recursive`` to fetch its pinned dependencies.
 For an existing checkout whose submodule URL has changed, first run
 ``git submodule sync --recursive``.
+
+Soft 11b constellations
+----------------------
+
+``epd_wifi_dsss_symbols`` exposes measured complex samples, never decoded ideal
+points. Python ``dsss_symbols`` and JavaScript ``dsssSymbols`` use the same C
+implementation: CFO correction, a regularized seven-tap equalizer trained on
+Barker chips, differential despreading for DBPSK/DQPSK, and chip sampling for
+5.5/11-Mbps CCK. CCK output is a QPSK **chip** constellation, not one QAM point
+per eight-chip codeword. Payload extraction requires a captured CRC-valid PLCP;
+short preamble-only captures can instead select ``barker``. PBCC is excluded.
+The Barker option expects already validated training offsets from the packet
+metadata. ``epd_wifi_qualify_dsss_training`` additionally checks known chip
+waveform correlation when there is no native modem packet verdict, rejecting
+CW and other coherent signals that differential phase alone cannot reject.
+
+``tests/test_wifi_symbols.py`` checks all four rates, long/short PLCP, an echo,
+truncation, and native/WebAssembly parity. Set ``EPD_PYTHON_DIR`` and
+``EPD_WASM_DIR`` when testing separate build directories.

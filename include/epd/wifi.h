@@ -51,3 +51,17 @@ bool epd_wifi_qualify_extended_header(const uint32_t *samples, uint32_t words,
 bool epd_wifi_qualify_extended_at(const uint32_t *samples, uint32_t words,
                                     const epd_wifi_packet_t *training,
                                     void *scratch, epd_wifi_packet_t *packet);
+
+/* Soft 11b constellation samples, interleaved I,Q floats (never decisions).
+ * kind=0: payload, requiring captured CRC-valid PLCP; kind=1: validated Barker
+ * training at hint/length. Payload CCK returns equalized chip samples; DSSS
+ * returns differential despread symbols. rate reports half-Mbps (2 for Barker).
+ * Output capacity counts complex points. Returns zero if unavailable/invalid. */
+unsigned epd_wifi_dsss_symbols(const uint32_t *samples, unsigned words, unsigned kind,
+                              unsigned hint, unsigned length, int cfo_hz, void *scratch,
+                              float *out, unsigned capacity, unsigned *rate);
+
+/* Standalone Barker admission, additionally requiring the known chip waveform
+ * (native_dsss alone relies on the modem's packet verdict). */
+bool epd_wifi_qualify_dsss_training(const uint32_t *samples, unsigned words, int hint,
+                                  void *scratch, epd_wifi_packet_t *packet);

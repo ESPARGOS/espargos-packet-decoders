@@ -11,13 +11,14 @@ class PacketDecoders {
         this.iq = module._malloc(16384 * 4);
         this.work = module._malloc(module._epd_workspace_size());
         this.result = module._malloc(104);
-        if (!this.iq || !this.work || !this.result) {
+        this.symbols = module._malloc(1024 * 8 + 4);
+        if (!this.iq || !this.work || !this.result || !this.symbols) {
             this.destroy();
             throw Error('Cannot allocate decoder workspace');
         }
     }
     destroy() {
-        for (const key of ['iq', 'work', 'result']) {
+        for (const key of ['iq', 'work', 'result', 'symbols']) {
             if (this[key]) this.module._free(this[key]);
             this[key] = 0;
         }
@@ -51,6 +52,19 @@ class PacketDecoders {
     }
     ble(iq, {sample_rate = 4000000, phy = 0, channel = 37} = {}) {
         return this.decode(iq, 1, sample_rate, phy, channel);
+    }
+    dsssSymbols(iq, {field = 'payload', training = 0, trainingWords = 0, cfo = 0} = {}) {
+        if (!this.work) throw Error('Decoder has been destroyed');
+        if (!(iq instanceof Uint32Array) || !iq.length || iq.length > 16384)
+            throw RangeError('Expected 1..16384 packed uint32 IQ samples');
+        if (!['payload', 'barker'].includes(field)) throw RangeError('Unknown DSSS field');
+        const m = this.module;
+        m.HEAPU32.set(iq, this.iq / 4);
+        const count = m._epd_wifi_dsss_symbols(this.iq, iq.length, field === 'barker' ? 1 : 0,
+            training, trainingWords, Math.round(cfo), this.work, this.symbols, 1024, this.symbols + 8192);
+        const values = new Float32Array(m.HEAPU8.buffer, this.symbols, count * 2);
+        return {points : Array.from({length : count}, (_, n) => ({re : values[n*2], im : values[n*2+1]})),
+            rate : count ? m.HEAPU32[(this.symbols + 8192) / 4] / 2 : 0};
     }
 }
 if (typeof module !== 'undefined') module.exports = PacketDecoders;

@@ -287,6 +287,18 @@ class WiFiQualificationTests(unittest.TestCase):
                 self.assertTrue(packet.crc_checked)
                 self.assertTrue(packet.crc_valid, rate)
 
+    def test_standalone_barker_rejects_tones(self):
+        fn = self.lib.epd_wifi_qualify_dsss_training
+        fn.argtypes = [C.POINTER(C.c_uint32), C.c_uint, C.c_int, C.c_void_p, C.POINTER(Packet)]
+        fn.restype = C.c_bool
+        wave = resample_poly(phy.synthesize_dsss(phy.make_probe_request(), 11), 20, 11)
+        for z, expected in [(wave[200:1224], True),
+                            (np.exp(2j*np.pi*.1*np.arange(1024)), False),
+                            (np.ones(1024), False)]:
+            iq = packed(z, cfo=27000, noise=.5, dc=10+7j)
+            p = Packet()
+            self.assertEqual(fn(iq.ctypes.data_as(C.POINTER(C.c_uint32)), len(iq), 100, self.scratch, C.byref(p)), expected)
+
     def test_11b_headers_all_rates(self):
         for rate in (1, 2, 5.5, 11):
             waveform = resample_poly(phy.synthesize_dsss(phy.make_probe_request(), rate), 20, 11)

@@ -18,6 +18,8 @@ typedef struct {
 } channel_t;
 typedef struct {
     bool native_header_only, extended_only;
+    unsigned dsss_payload_start;
+    bool dsss_pbcc;
     int16_t i[MAX_WORDS], q[MAX_WORDS];
     cf cck_samples[4096];
     uint8_t trace[MAX_BITS][64], bits[MAX_BITS];
@@ -909,6 +911,8 @@ static bool dsss(workspace_t *w, unsigned count, epd_wifi_packet_t *packet) {
                         state = ((state << 1) | w->serial[k]) & 127;
                 cck_prefix(w, count, first, phase, rotation, state, &p);
             }
+            w->dsss_payload_start = phase + 20 * (n + (short_header ? 41 : 65));
+            w->dsss_pbcc = header[11];
             *packet = p;
             best = quality;
             valid = true;
@@ -1057,4 +1061,114 @@ bool epd_wifi_qualify_extended_at(const uint32_t *samples, uint32_t words,
     if (ofdm_header(w, words, start, omega, packet))
         return true;
     return epd_wifi_qualify_extended_header(samples, words, scratch, packet);
+}
+
+unsigned epd_wifi_dsss_symbols(const uint32_t *samples, unsigned words, unsigned kind,
+                              unsigned hint, unsigned length, int cfo_hz, void *scratch,
+                              float *out, unsigned capacity, unsigned *rate) {
+    if (!samples || !scratch || !out || !rate || !capacity || words > MAX_WORDS ||
+        kind > 1 || words < 200) return 0;
+    workspace_t *w = scratch;
+    for (unsigned n = 0; n < words; n++) {
+        w->i[n] = ((samples[n] & 1023) ^ 512) - 512;
+        w->q[n] = -((int)(((samples[n] >> 10) & 1023) ^ 512) - 512);
+    }
+    unsigned start, end;
+    if (kind == 0) {
+        epd_wifi_packet_t p;
+        if (!dsss(w, words, &p) || w->dsss_pbcc) return 0;
+        start = w->dsss_payload_start;
+        cfo_hz = p.cfo_hz;
+        *rate = p.rate_half_mbps;
+        unsigned duration = (p.length_bytes * 16u + *rate - 1) / *rate;
+        end = start + duration * 20;
+        if (end > words) end = words;
+    } else {
+        if (hint > words || length > words - hint || length < 200) return 0;
+        start = hint + 180;
+        end = hint + length;
+        *rate = 2;
+    }
+    // Resolve the chip phase against known Barker symbols before the field.
+    int shift = 0;
+    float best = -1;
+    for (int s = -10; s <= 10; s++) {
+        if ((int)start + s < 180 || (int)end + s > (int)words) continue;
+        float energy = 0;
+        for (unsigned symbol = 1; symbol < 8; symbol++) {
+            int t = (int)start + s - 180 + symbol * 20;
+            cf z = {0};
+            for (unsigned k = 0; k < 20; k++) {
+                z.r += w->i[t+k] * wifi_barker20[k];
+                z.i += w->q[t+k] * wifi_barker20[k];
+            }
+            energy += power(z);
+        }
+        if (energy > best) { best = energy; shift = s; }
+    }
+    if (best <= 0) return 0;
+    start += shift; end += shift;
+    if (end > start + 3800) end = start + 3800;
+    if (end <= start + 24 || start < 180) return 0;
+    cf weights[CCK_TAPS];
+    cck_equalizer(w, start, end, cfo_hz * (2 * PI / 20000000), weights);
+    cf previous = {0};
+    for (unsigned k = 0; k < 20; k++) {
+        cf x = cck_filter(w, 160+k, weights);
+        previous.r += x.r * wifi_barker20[k];
+        previous.i += x.i * wifi_barker20[k];
+    }
+    float phase = atan2f(previous.i, previous.r);
+    cf carrier = {cosf(-phase), sinf(-phase)};
+    unsigned count = 0;
+    if (*rate <= 4) {
+        for (unsigned n = 180; n + 23 < end - start + 180 && count < capacity; n += 20) {
+            cf z = {0};
+            for (unsigned k = 0; k < 20; k++) {
+                cf x = cck_filter(w, n+k, weights);
+                z.r += x.r * wifi_barker20[k]; z.i += x.i * wifi_barker20[k];
+            }
+            cf delta = mul(z, conjugate(previous));
+            out[2*count] = delta.r; out[2*count+1] = delta.i;
+            previous = z; count++;
+        }
+    } else {
+        // CCK chips carry QPSK phases; keep the measured amplitudes and
+        // phase errors rather than replacing them with decoded codewords.
+        for (unsigned chip = 0; count < capacity; chip++) {
+            float t = 180 + chip * (20.0f / 11);
+            unsigned n = (unsigned)t;
+            if (n + 4 >= end - start + 180) break;
+            float f = t - n;
+            cf a = cck_filter(w, n, weights), b = cck_filter(w, n+1, weights);
+            cf z = mul((cf){a.r + f*(b.r-a.r), a.i + f*(b.i-a.i)}, carrier);
+            out[2*count] = z.r; out[2*count+1] = z.i; count++;
+        }
+    }
+    float energy = 0;
+    for (unsigned n = 0; n < 2*count; n++) energy += out[n]*out[n];
+    if (!count || !(energy > 1e-12f) || !isfinite(energy)) return 0;
+    float scale = sqrtf(count / energy);
+    for (unsigned n = 0; n < 2*count; n++) out[n] *= scale;
+    return count;
+}
+
+bool epd_wifi_qualify_dsss_training(const uint32_t *samples, unsigned words, int hint,
+                                  void *scratch, epd_wifi_packet_t *packet) {
+    if (!epd_wifi_qualify_native(samples, words, true, hint, scratch, packet)) return false;
+    double matched = 0, total = 0, template_power = 0;
+    for (unsigned k = 0; k < 20; k++) template_power += wifi_barker20[k] * wifi_barker20[k];
+    for (unsigned s = 0; s < packet->training_words; s += 20) {
+        double r = 0, q = 0, energy = 0;
+        for (unsigned k = 0; k < 20; k++) {
+            uint32_t raw = samples[packet->training_start + s + k];
+            int i = (int)((raw & 1023) ^ 512) - 512;
+            int j = (int)(((raw >> 10) & 1023) ^ 512) - 512;
+            r += i * wifi_barker20[k]; q += j * wifi_barker20[k];
+            energy += i*i + j*j;
+        }
+        matched += r*r + q*q;
+        total += energy * template_power;
+    }
+    return total > 0 && matched > .55 * total;
 }

@@ -42,3 +42,11 @@ def wifi(iq, *, stage='full', training_hint=0):
 def ble(iq, *, sample_rate=4_000_000, phy=0, channel=37):
     """Qualify BLE 1M/2M; unknown connection CRC seeds remain unverified."""
     return _result(_native.decode(_samples(iq), 1, sample_rate, phy, channel))
+
+
+def dsss_symbols(iq, *, field='payload', training=0, training_words=0, cfo=0):
+    """Soft equalized CCK chips or differential DSSS/Barker symbols, never decisions."""
+    if field not in ('payload', 'barker'):
+        raise ValueError('Unknown DSSS field')
+    rate, raw = _native.dsss_symbols(_samples(iq), int(field == 'barker'), training, training_words, round(cfo))
+    return dict(rate=rate / 2, points=[complex(r, i) for r, i in struct.iter_unpack('=ff', raw)])
