@@ -82,12 +82,9 @@ HT_DATA_SUBCARRIERS = [
     k for k in range(-28, 29) if k not in (0, -21, -7, 7, 21)
 ]
 
-HT_LTF_SIGNS = (
-    1, 1, 1, 1, -1, -1, 1, 1, -1, 1, -1, 1, 1, 1,
-    1, 1, 1, -1, -1, 1, 1, -1, 1, -1, 1, -1, 1, 1,
-    1, -1, -1, 1, 1, -1, 1, -1, 1, -1, -1, -1, -1, -1,
-    1, 1, -1, -1, 1, -1, 1, -1, 1, 1, 1, 1, -1, -1,
-)
+# HT20 extends the legacy LTF with two +1 and two -1 edge tones.
+# Derive it to avoid a separately transcribed sequence (notably k=-3).
+HT_LTF_SIGNS = (1, 1, *LONG[6:32].real.astype(int), *LONG[33:59].real.astype(int), -1, -1)
 
 VIRTUAL_HT_STBC_H1 = 1.0 + 0.0j
 VIRTUAL_HT_STBC_H2 = 0.0 + 0.5j
