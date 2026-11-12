@@ -105,3 +105,44 @@ CW and other coherent signals that differential phase alone cannot reject.
 ``tests/test_wifi_symbols.py`` checks all four rates, long/short PLCP, an echo,
 truncation, and native/WebAssembly parity. Set ``EPD_PYTHON_DIR`` and
 ``EPD_WASM_DIR`` when testing separate build directories.
+
+OFDM payload reliability retry
+------------------------------
+
+Legacy OFDM uses channel-power-weighted soft constellation metrics and Viterbi
+sequence decoding. A complete payload that fails CRC gets one additional decode
+with per-tone reliability estimated from the difference of the two L-LTF
+symbols. The band-average noise estimate is a lower bound, so a coincidentally
+small difference cannot give a tone excessive weight. Only a CRC-valid payload
+replaces the original result. Accepted headers, timing, successful decodes,
+truncated captures, HT-header handling and native-training checks are unchanged.
+
+The retry does not change captured IQ or channel-estimation/calibration inputs.
+No retry runs for a capture without a complete payload CRC. This keeps the
+usual short-window acquisition path unchanged. To compare complete-packet
+recovery on fixed multipath, white-noise and narrowband-interference cases::
+
+    git show HEAD:src/wifi.c > /tmp/wifi-baseline.c
+    python tools/benchmark_wifi_noise.py /tmp/wifi-baseline.c
+
+Use the desired earlier revision instead of HEAD when comparing committed
+versions. The tool reports recovered and lost CRC-valid packets and native
+processing time; it is a controlled stress corpus, not a field packet-error-rate
+prediction.
+
+Equalized OFDM input
+--------------------
+
+``epd_wifi_decode_ofdm`` (JavaScript ``wifiOfdm``) accepts 1--200 consecutive
+64-bin OFDM symbols, starting with L-SIG, as float triples ``(I,Q,precision)``.
+Precision is inverse complex noise variance after equalization/combining; zero
+means an erased carrier. Bins use FFT order. The receiver retains relative
+precision across all carriers and symbols through pilot correction, max-log
+soft demapping and Viterbi decoding. Inputs are actual received observations,
+not constellation decisions. The caller supplies associated, CFO-corrected
+symbols; this entry does not perform synchronization or assert a physical
+training location. Invalid/nonfinite/negative-precision inputs are rejected.
+The existing bounded legacy payload and HT-header support limits also apply.
+
+Independent waveform, erasure, coloured-noise and WASM tests are in
+``tests/test_wifi_ofdm_soft.py``.

@@ -36,6 +36,24 @@ def packed(samples, cfo=0, noise=0, dc=0):
     return ((i & 1023) | ((q & 1023) << 10)).astype(np.uint32)
 
 
+def colored_ofdm_iq(rate, snr, seed, interference=True):
+    """Independent multipath + AWGN + narrowband random interference fixture."""
+    rng = np.random.default_rng(seed)
+    wave = phy.synthesize_nonht(phy.make_probe_request(), rate)
+    h = np.array([1, 0, 0, .35j, 0, .15])
+    y = np.convolve(wave, h)[:len(wave)]
+    power = np.mean(abs(y)**2)
+    noise = (rng.normal(size=len(y)) + 1j*rng.normal(size=len(y))) * np.sqrt(power*10**(-snr/10)/2)
+    colored = np.convolve(rng.normal(size=len(y)) + 1j*rng.normal(size=len(y)), np.ones(16)/4, mode='same')
+    if interference:
+        noise += colored * np.exp(2j*np.pi*(8.3+seed%6)*np.arange(len(y))/64) * np.sqrt(power*.15)
+    y = (y+noise)*np.exp(2j*np.pi*37000*np.arange(len(y))/20e6)
+    y = np.r_[np.zeros(40), y, np.zeros(40)]
+    y *= 200/max(abs(y))
+    return ((np.rint(y.real).astype('i4') & 1023) |
+            ((np.rint(-y.imag).astype('i4') & 1023) << 10)).astype('u4')
+
+
 class WiFiQualificationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -62,6 +80,26 @@ class WiFiQualificationTests(unittest.TestCase):
         valid = self.fn(ring.ctypes.data_as(C.POINTER(C.c_uint32)), len(ring), offset,
                         len(samples), self.scratch, C.byref(packet))
         return valid, packet
+
+    def test_noise_weighted_payload_retry(self):
+        # These complete packets failed CRC with channel-power-only metrics.
+        # Their L-SIG stays fixed; only the payload reliability is retried.
+        for rate, snr, seed in [(6,8,1), (6,14,17), (6,26,3),
+                                (12,8,8), (12,14,4), (12,20,14), (24,20,3)]:
+            ok, packet = self.admit(colored_ofdm_iq(rate, snr, seed), 15999)
+            self.assertTrue(ok and packet.crc_checked and packet.crc_valid, (rate,snr,seed))
+            self.assertEqual(packet.rate_half_mbps, 2*rate)
+            self.assertEqual(packet.length_bytes, len(phy.make_probe_request()))
+            self.assertEqual(bytes(packet.transmitter), bytes.fromhex('020000000001'))
+        # Retrying cannot repair a deliberately wrong on-air CRC or invent
+        # completeness for a truncated capture. Existing evidence must remain.
+        wave = phy.synthesize_nonht(phy.make_probe_request(corrupt_payload=True), 6)
+        ok, packet = self.admit(packed(wave))
+        self.assertTrue(ok and packet.crc_checked)
+        self.assertFalse(packet.crc_valid or packet.mac_valid)
+        ok, packet = self.admit(packed(wave[:480]))
+        self.assertTrue(ok)
+        self.assertFalse(packet.crc_checked or packet.crc_valid)
 
     def test_standard_constellation_bit_order(self):
         # IEEE 802.11-2012 18.3.5.8: b0 arrives first and controls I's sign.

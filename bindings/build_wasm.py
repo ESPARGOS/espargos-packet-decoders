@@ -14,7 +14,7 @@ subprocess.run(['emcc', '-O3', '-std=c99', '-I'+str(root/'include'),
     '-sMODULARIZE=1', '-sEXPORT_NAME=createEPDModule', '-sENVIRONMENT=web,node',
     '-sALLOW_MEMORY_GROWTH=1', '-sFILESYSTEM=0',
     '-sEXPORTED_RUNTIME_METHODS=["HEAPU32","HEAPU8"]',
-    '-sEXPORTED_FUNCTIONS=["_malloc","_free","_epd_workspace_size","_epd_decode_wifi","_epd_decode_ble","_epd_wifi_dsss_symbols"]',
+    '-sEXPORTED_FUNCTIONS=["_malloc","_free","_epd_workspace_size","_epd_decode_wifi","_epd_decode_wifi_ofdm","_epd_decode_ble","_epd_wifi_dsss_symbols"]',
     '-o', str(out/'epd.js')], check=True)
 shutil.copyfile(root/'bindings/packet_decoders.js', out/'packet_decoders.js')
 
