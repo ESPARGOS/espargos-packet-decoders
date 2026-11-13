@@ -1,88 +1,81 @@
-ESPARGOS packet decoders
+ESPARGOS Packet Decoders
 ========================
 
-A portable WiFi and Bluetooth LE decoder library for captured I/Q samples.
-The same C implementation can run in embedded firmware, in a web browser
-through WebAssembly, or in Python through a native extension.
+.. image:: img/espargos-logo.png
+   :width: 240px
+   :align: right
+   :alt: ESPARGOS
+   :target: https://espargos.net/
 
-The library provides the common decoding layer for the
-`ESPARGOS <https://espargos.net/>`_ ecosystem:
+This library decodes WiFi and Bluetooth LE packets from I/Q samples. It is
+written in C and builds for embedded processors, WebAssembly, and Python.
 
-* **Sensor firmware:** identify and validate packets in captured samples.
-* **Web interface:** decode samples in the browser, including soft symbols for
-  constellation plots. The controller serves the WebAssembly assets.
-* **Python / pyespargos:** use the Python binding for offline analysis or client
-  integration. The binding is usable independently of pyespargos; device access
-  and array processing belong to the client.
+We use it in the `ESPARGOS <https://espargos.net/>`_ sensor firmware and web
+interface. The Python binding makes the same decoder available for offline
+analysis and integration with `pyespargos <https://github.com/ESPARGOS/pyespargos>`_.
+In the web interface, decoding runs in the browser; the controller only serves
+the WASM files.
 
-The decoder has no hardware, network, or device-discovery dependency. It accepts
-samples supplied by the caller and returns packet metadata and validation results.
-Acquisition, cross-antenna association, MRC, and array calibration remain with
-the application. Other receivers can use it by adapting their samples to the
-input format below.
+You can also use it with samples from another receiver. The library takes a
+buffer of samples and returns what it can decode: packet headers, addresses,
+CRC results, and soft symbols. It leaves sample acquisition and array processing
+to the application. See the sample format below.
 
-Supported signals
+What can it decode?
+-------------------
+
+* **802.11b:** DSSS and CCK at 1, 2, 5.5 and 11 Mbps, with long or short preambles.
+* **Legacy OFDM:** 20 MHz WiFi at 6–54 Mbps.
+* **802.11n:** legacy training and HT-SIG. HT payload decoding is not implemented.
+* **Bluetooth LE:** LE1M and LE2M packets. LE Coded support currently stops at
+  preamble detection.
+
+Short captures are useful too: the decoder can recover training or a header
+without having the whole packet. Results distinguish a decoded address from a
+verified CRC. BLE advertising CRCs are checked; connection CRCs remain unverified
+when their initialization value is unknown.
+
+Using the library
 -----------------
 
-* **WiFi 802.11b:** long/short preambles, DSSS and CCK at 1, 2, 5.5 and 11 Mbps.
-* **Legacy OFDM:** 20 MHz, 6–54 Mbps, with soft demapping and Viterbi decoding.
-* **HT:** legacy training and HT-SIG recovery; HT/MIMO payload decoding is not
-  provided by this library.
-* **Bluetooth LE:** LE1M and LE2M packet decoding. Advertising CRC is checked;
-  an unknown connection CRC seed remains unverified. LE Coded support is limited
-  to preamble detection, without FEC or payload decoding.
+C and ESP-IDF
+~~~~~~~~~~~~~
 
-Captures may contain only part of a packet. Decoded identity, checked CRC, and
-valid CRC are separate results: finding training or a header does not imply a
-valid full packet. When native modem metadata is available, applications can
-use the training-only entry points instead of decoding the packet again.
-
-Input format
-------------
-
-Raw input uses packed 32-bit words: signed 10-bit I in bits 0–9 and signed
-10-bit Q in bits 10–19. Higher bits are ignored. Q uses the ESPARGOS ADC tap's
-inverted polarity relative to conventional complex baseband.
-
-WiFi expects 20 MSa/s. BLE expects an IF of +2 MHz at 4, 8 or 16 MSa/s;
-LE2M requires at least 8 MSa/s. C callers can supply circular buffers and own
-all workspaces, so independent decoders can run concurrently.
-
-C / embedded firmware
----------------------
-
-Build the host library with a C99 compiler and CMake::
+For a host build, you need a C99 compiler and CMake::
 
     cmake -S . -B build -DBUILD_SHARED_LIBS=ON
     cmake --build build
 
-For ESP-IDF, add this repository as ``components/espargos-packet-decoders``
-and list ``espargos-packet-decoders`` in the consuming component's requirements.
-The public API is in ``include/epd/wifi.h`` and ``include/epd/ble.h``.
-The ABI is not version-stable yet; rebuild consumers when updating the library.
+For ESP-IDF, add the repository under ``components/espargos-packet-decoders``
+and add ``espargos-packet-decoders`` to your component's requirements.
+The API is declared in ``include/epd/wifi.h`` and ``include/epd/ble.h``.
+C callers provide the workspace; separate workspaces allow concurrent decoding.
+Rebuild your application when updating the library, since the ABI may change.
 
 Python
-------
+~~~~~~
 
-Requires Python 3.9+, a C compiler, and Python development headers::
+Install from this checkout with Python 3.9 or newer. Building the extension
+requires a C compiler and Python development headers::
 
     python -m pip install .
 
-Decode an iterable of packed sample words or native-endian packed bytes::
+Pass an iterable of packed sample words, or native-endian packed bytes::
 
     from espargos_packet_decoders import wifi, ble
 
     packet = wifi(iq_words)
     advertisement = ble(ble_iq_words, sample_rate=4_000_000, channel=37)
 
-Results are dictionaries, or ``None`` when qualification fails. Check
-``crc_checked`` and ``crc_valid`` separately. ``dsss_symbols()`` returns soft
-DSSS symbols or CCK chips for constellation plots. Decoding releases the GIL.
+Both functions return a dictionary, or ``None`` if decoding fails.
+``crc_checked`` tells you whether enough data was available to check the CRC;
+``crc_valid`` gives the result. ``dsss_symbols()`` returns soft DSSS symbols or
+CCK chips for constellation plots. The extension releases the GIL while decoding.
 
-WebAssembly / JavaScript
-------------------------
+JavaScript and WebAssembly
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-With Emscripten's ``emcc`` on PATH::
+With Emscripten's ``emcc`` on your PATH, build the browser files::
 
     python bindings/build_wasm.py dist
 
@@ -93,28 +86,39 @@ Load the two scripts in that order, then::
     const packet = decoder.wifi(iqWords); // Uint32Array of packed samples
     decoder.destroy();
 
-The wrapper also provides ``ble()``, ``dsssSymbols()``, and ``wifiOfdm()``.
-The latter accepts equalized OFDM symbols and per-carrier inverse noise variance
-from an external combiner; see ``epd_wifi_decode_ofdm`` in the C header for the
-layout. CCK constellations show measured QPSK chips, not decoded codewords.
+The wrapper also has ``ble()``, ``dsssSymbols()``, and ``wifiOfdm()``.
+``wifiOfdm()`` accepts equalized OFDM symbols and their inverse noise variance,
+so an application can combine antenna signals before decoding. Its input layout
+is documented alongside ``epd_wifi_decode_ofdm`` in the C header.
 
-The build includes license files and ``source.json`` with the source revision.
-Firmware repositories pin the source as a submodule and distribute the generated
-browser assets; their normal builds do not need Emscripten.
+The build copies the license files and records the source revision in
+``source.json``. ESPARGOS firmware repositories include these generated assets,
+so a normal firmware build does not need Emscripten.
 
-Development
------------
+Sample format
+-------------
 
-Tests run without radio hardware. They use synthetic waveforms and small recorded
-regression fixtures to check decoding, invalid inputs, and native/WebAssembly
-agreement. With Node.js and Emscripten available::
+Each raw sample is a packed 32-bit word: signed 10-bit I in bits 0–9 and signed
+10-bit Q in bits 10–19. The upper bits are ignored. Q follows the ESPARGOS ADC
+tap's convention, with the opposite sign to conventional complex baseband.
+
+WiFi samples must be at 20 MSa/s. BLE expects an IF of +2 MHz and a sample rate
+of 4, 8 or 16 MSa/s; LE2M needs at least 8 MSa/s. The C API also accepts circular
+buffers. If your radio already supplies packet metadata, the training-only
+functions can check the captured training without decoding the header again.
+
+Running the tests
+-----------------
+
+The tests use generated waveforms and recorded samples; no radio is needed.
+With Node.js and Emscripten installed::
 
     python -m pip install -e '.[test]'
     python bindings/build_wasm.py dist
     EPD_WASM_DIR=dist python -m unittest discover -s tests
 
-``tools/wifi_ppdu.py`` generates deterministic WiFi test waveforms. It does not
-control or transmit through any radio hardware.
+The tests cover decoding and malformed inputs, and compare native and WASM
+results. ``tools/wifi_ppdu.py`` contains the WiFi waveform generator.
 
 License
 -------
