@@ -53,7 +53,7 @@ class SymbolsTests(unittest.TestCase):
                 self.assertLess(np.sqrt(np.mean(bp.imag**2)), .05)
                 self.assertFalse(dsss_symbols(training)['points'])
                 cases.append(dict(iq=training.tolist(), options=options))
-        wasm = Path(os.environ['EPD_WASM_DIR'])
+        wasm = Path(os.environ['EPD_WASM_DIR']).resolve()
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)/'symbols.json'; source.write_text(json.dumps(cases))
             script = "const D=require(process.argv[1]+'/packet_decoders.js');D.create().then(d=>{const c=require(process.argv[2]);console.log(JSON.stringify(c.map(x=>d.dsssSymbols(Uint32Array.from(x.iq),x.options))));d.destroy()})"

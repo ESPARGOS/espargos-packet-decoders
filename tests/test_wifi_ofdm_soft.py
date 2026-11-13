@@ -123,6 +123,7 @@ class SoftOFDMTests(unittest.TestCase):
     def test_wasm_binding(self):
         directory=os.environ.get('EPD_WASM_DIR')
         if not directory:self.skipTest('Set EPD_WASM_DIR to exercise the WASM binding')
+        directory=str(Path(directory).resolve())
         cases=[symbols(rate).reshape(-1).tolist() for rate in [6,12,24,54]]
         source=Path(self.tmp.name)/'cases.json';source.write_text(json.dumps(cases))
         script="""const D=require(process.argv[1]+'/packet_decoders.js');

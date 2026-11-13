@@ -5,6 +5,19 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Common contract: input samples are read-only. Workspaces must have at least
+ * epd_wifi_qualify_workspace_size() bytes and malloc-compatible alignment.
+ * Do not share a workspace between concurrent calls or overlap it with input
+ * or output. No pointer is retained after a call. A false return means no valid
+ * result; packet contents must then be ignored. Success does not imply FCS.
+ * Raw input capacity/length is at most 16384 sample words. Offsets and lengths
+ * are in sample words, not bytes; circular offset must be less than capacity.
+ * Contiguous-input functions use words as both buffer length and capacity. */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 enum {
     EPD_WIFI_PHY_OFDM = 0,
     EPD_WIFI_PHY_DSSS = 1,
@@ -13,7 +26,11 @@ enum {
 };
 
 /* Offsets refer to the supplied, chronologically ordered capture window.
- * A decoded MAC prefix is distinct from a checked and valid whole-frame FCS. */
+ * UINT16_MAX means an unavailable frame/training offset. training_words=0
+ * means no training was established. cfo_hz is in Hz; duration_us in us;
+ * rate_half_mbps is in units of 0.5 Mbps. Only prefix_length bytes of prefix
+ * are meaningful; transmitter requires mac_valid. crc_valid requires
+ * crc_checked. A decoded prefix does not imply a verified whole-frame FCS. */
 typedef struct {
     uint16_t frame_start, training_start, training_words, length_bytes;
     uint16_t duration_us;
@@ -77,3 +94,7 @@ bool epd_wifi_qualify_dsss_training(const uint32_t *samples, unsigned words, int
 #define EPD_WIFI_OFDM_MAX_SYMBOLS 200u
 bool epd_wifi_decode_ofdm(const float *symbols, unsigned count, void *workspace,
                           epd_wifi_packet_t *packet);
+
+#ifdef __cplusplus
+}
+#endif

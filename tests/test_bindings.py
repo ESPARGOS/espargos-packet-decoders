@@ -13,7 +13,7 @@ import unittest
 import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.environ.get('EPD_PYTHON_DIR', str(ROOT/'python')))
-from espargos_packet_decoders import wifi, ble
+from espargos_packet_decoders import wifi, ble, dsss_symbols
 from test_ble_qualify import waveform
 from test_wifi_qualify import colored_ofdm_iq
 
@@ -62,6 +62,49 @@ class BindingTests(unittest.TestCase):
         for iq in ([], [0]*16385, b'bad'):
             with self.assertRaises(ValueError): wifi(iq)
         self.assertIsNone(wifi([0]*512, stage='native_ofdm', training_hint=-1000))
-        self.assertIsNone(ble([0]*512, channel=40))
+        with self.assertRaises(ValueError): ble([0]*512, channel=40)
+
+    def test_input_buffers_and_options(self):
+        iq, _ = waveform()
+        expected = ble(iq)
+        self.assertTrue(expected['crc_valid'])
+        for raw in (iq.tobytes(), bytearray(iq.tobytes()), memoryview(iq), memoryview(iq.tobytes())):
+            self.assertEqual(ble(raw), expected)
+        for stage in ('unknown', 'constructor', 'toString'):
+            with self.assertRaises(ValueError): wifi([0]*512, stage=stage)
+        for options in ({'channel': -1}, {'channel': 40}, {'sample_rate': 5000000},
+                        {'phy': 2}, {'phy': 1, 'sample_rate': 4000000}):
+            with self.assertRaises(ValueError): ble([0]*512, **options)
+        with self.assertRaises(TypeError): wifi([0]*512, training_hint=1.5)
+        with self.assertRaises(ValueError): wifi([0]*512, training_hint=2**32)
+        for options in ({'training': -1}, {'training_words': 2**32}, {'cfo': float('nan')}):
+            with self.assertRaises(ValueError): dsss_symbols([0]*512, **options)
+
+    def test_javascript_options_and_ownership(self):
+        directory = str(Path(os.environ.get('EPD_WASM_DIR', ROOT/'dist')).resolve())
+        script = r"""
+const assert=require('assert'),D=require(process.argv[1]+'/packet_decoders.js');
+(async()=>{
+ const d=await D.create(),raw=new Uint32Array(512);
+ for(const stage of ['unknown','constructor','toString','__proto__'])
+  assert.throws(()=>d.wifi(raw,{stage}),RangeError);
+ assert.throws(()=>d.wifi(raw,{training_hint:1.5}),RangeError);
+ assert.throws(()=>d.wifi(raw,{training_hint:2**32}),RangeError);
+ assert.throws(()=>d.wifi(raw,{stage:['full']}),TypeError);
+ for(const options of [{channel:-1},{channel:40},{sample_rate:5000000},{phy:2},{phy:1,sample_rate:4000000}])
+  assert.throws(()=>d.ble(raw,options),RangeError);
+ for(const options of [{training:-1},{trainingWords:2**32},{cfo:NaN}])
+  assert.throws(()=>d.dsssSymbols(raw,options),RangeError);
+ assert.strictEqual(d.wifi(raw),null);
+ // Result byte arrays must survive later writes and workspace destruction.
+ const m=d.module,r=d.result;m.HEAPU32.fill(0,r/4,r/4+26);
+ m.HEAPU32[r/4]=1;m.HEAPU32[r/4+13]=1;m.HEAPU8[r+64]=42;
+ const result=d.readResult(true);m.HEAPU8[r+64]=99;
+ d.destroy();d.destroy();assert.strictEqual(result.prefix[0],42);
+ for(const fn of [()=>d.wifi(raw),()=>d.ble(raw),()=>d.dsssSymbols(raw),()=>d.wifiOfdm(new Float32Array(192))])
+  assert.throws(fn,/destroyed/);
+})().catch(e=>{console.error(e);process.exitCode=1});
+"""
+        subprocess.run(['node', '-e', script, directory], check=True)
 
 if __name__ == '__main__': unittest.main()
