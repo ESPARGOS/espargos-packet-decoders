@@ -8,7 +8,7 @@ written in C and builds for embedded processors, WebAssembly, and Python.
 We use it in the [ESPARGOS](https://espargos.net/) sensor firmware and web
 interface. The Python binding makes the same decoder available for offline
 analysis and integration with [pyespargos](https://github.com/ESPARGOS/pyespargos).
-In the web interface, decoding runs in the browser; the controller only serves
+In the web interface, decoding runs in the browser. The controller only serves
 the WASM files.
 
 You can also use it with samples from another receiver. The library takes a
@@ -26,7 +26,7 @@ to the application. See the sample format below.
 
 Short captures are useful too: the decoder can recover training or a header
 without having the whole packet. Results distinguish a decoded address from a
-verified CRC. BLE advertising CRCs are checked; connection CRCs remain unverified
+verified CRC. BLE advertising CRCs are checked. Connection CRCs remain unverified
 when their initialization value is unknown.
 
 ## Using the library
@@ -43,7 +43,7 @@ cmake --build build
 For ESP-IDF, add the repository under `components/espargos-packet-decoders`
 and add `espargos-packet-decoders` to your component's requirements.
 The API is declared in `include/epd/wifi.h` and `include/epd/ble.h`.
-C callers provide the workspace; separate workspaces allow concurrent decoding.
+C callers provide the workspace. Separate workspaces allow concurrent decoding.
 Rebuild your application when updating the library, since the ABI may change.
 
 ### Python
@@ -65,7 +65,7 @@ advertisement = ble(ble_iq_words, sample_rate=4_000_000, channel=37)
 ```
 
 Both functions return a dictionary, or `None` if decoding fails.
-`crc_checked` tells you whether enough data was available to check the CRC;
+`crc_checked` tells you whether enough data was available to check the CRC.
 `crc_valid` gives the result. `dsss_symbols()` returns soft DSSS symbols or
 CCK chips for constellation plots. The extension releases the GIL while decoding.
 
@@ -81,9 +81,9 @@ Serve `epd.js`, `epd.wasm`, and `packet_decoders.js` from `dist/`.
 Load the two scripts in that order, then:
 
 ```javascript
-const decoder = await PacketDecoders.create();
-const packet = decoder.wifi(iqWords); // Uint32Array of packed samples
-decoder.destroy();
+const decoder = await PacketDecoders.create()
+const packet = decoder.wifi(iqWords) // Uint32Array of packed samples
+decoder.destroy()
 ```
 
 The wrapper also has `ble()`, `dsssSymbols()`, and `wifiOfdm()`.
@@ -102,7 +102,7 @@ Each raw sample is a packed 32-bit word: signed 10-bit I in bits 0–9 and signe
 tap's convention, with the opposite sign to conventional complex baseband.
 
 WiFi samples must be at 20 MSa/s. BLE expects an IF of +2 MHz and a sample rate
-of 4, 8 or 16 MSa/s; LE2M needs at least 8 MSa/s. The C API also accepts circular
+of 4, 8 or 16 MSa/s. LE2M needs at least 8 MSa/s. The C API also accepts circular
 buffers. If your radio already supplies packet metadata, the training-only
 functions can check the captured training without decoding the header again.
 
@@ -112,36 +112,36 @@ Python and JavaScript calls are synchronous once the WASM module has loaded.
 They copy the input before decoding and return independent results: a later
 call or `destroy()` does not invalidate earlier results. Keep a JavaScript
 decoder for repeated calls, then call `destroy()` to release its workspace.
-Calling `destroy()` twice is safe; decoding after destruction raises an error.
+Calling `destroy()` twice is safe. Decoding after destruction raises an error.
 
 Raw input contains 1–16384 sample words. Python accepts unsigned-word iterables
-or packed `bytes`, `bytearray`, and `memoryview` buffers; JavaScript requires a
+or packed `bytes`, `bytearray`, and `memoryview` buffers. JavaScript requires a
 `Uint32Array`. Invalid input sizes or option values raise `ValueError` in Python
-or `RangeError` in JavaScript; wrong option types raise `TypeError`. A valid
+or `RangeError` in JavaScript. Wrong option types raise `TypeError`. A valid
 capture that cannot be decoded returns `None` / `null` instead.
 
 `wifi()` accepts stages `full`, `training`, `extended_header`, `native_ofdm`, and
 `native_dsss`. The native stages use `training_hint`, a signed sample offset.
 BLE uses `phy=0` for LE1M or `phy=1` for LE2M, with logical channel numbers 0–39.
-Offsets and lengths in results are measured in samples; an unavailable frame or
-training offset is 65535. `rate_half_mbps` is in units of 0.5 Mbps; `cfo_hz` is in
-Hz. A WiFi transmitter address requires `mac_valid`; BLE identity fields require
+Offsets and lengths in results are measured in samples. An unavailable frame or
+training offset is 65535. `rate_half_mbps` is in units of 0.5 Mbps. `cfo_hz` is in
+Hz. A WiFi transmitter address requires `mac_valid`. BLE identity fields require
 `identity_valid`. The returned prefix can be shorter than the full packet.
 
 The constellation helpers return `{rate, points}`, with rate in Mbps and at
-most 1024 complex points. Python uses `complex` values; JavaScript uses `{re, im}`.
+most 1024 complex points. Python uses `complex` values. JavaScript uses `{re, im}`.
 No available symbols gives an empty list and rate zero. For Barker extraction,
-Python names the options `training`, `training_words`, and `cfo`; JavaScript uses
+Python names the options `training`, `training_words`, and `cfo`. JavaScript uses
 `training`, `trainingWords`, and `cfo`. CFO is in Hz, rounded to the nearest integer
 (ties toward positive infinity). These helpers require previously validated
 training offsets. CCK points represent chips, not eight-chip codewords.
 
 The C headers specify workspace ownership, buffer bounds, and result validity.
-A failed C call returns false (or zero symbols); its output must be ignored.
+A failed C call returns false (or zero symbols). Its output must be ignored.
 
 ## Running the tests
 
-The tests use generated waveforms and recorded samples; no radio is needed.
+The tests use generated waveforms and recorded samples. No radio is needed.
 With Node.js and Emscripten installed:
 
 ```bash
