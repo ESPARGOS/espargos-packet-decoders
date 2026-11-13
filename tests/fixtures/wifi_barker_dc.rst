@@ -2,7 +2,7 @@ High-gain Barker training
 ========================
 
 ``wifi_barker_dc.bin`` contains 1536 little-endian raw C61 ADC words from
-antenna 2 of oldspargel.local, channel 11, automatic gain, on 2026-11-05.
+antenna 2 of an ESPARGOS One, channel 11, automatic gain, on 2026-11-05.
 This is a preamble-only shared history window associated with a native
 MAC/FCS-validated 1-Mbps reception. Upper bits retain gain/AGC state; I and Q
 are the signed low ten-bit fields. It contains no decoded MAC header or payload.
