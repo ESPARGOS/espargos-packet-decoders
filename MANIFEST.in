@@ -1,4 +1,6 @@
-include COPYING COPYING.LESSER
+include COPYING COPYING.LESSER CMakeLists.txt README.rst
 recursive-include include *.h
 recursive-include src *.h *.c
-recursive-include bindings *.h *.c
+recursive-include bindings *.h *.c *.py *.js
+recursive-include tests *.py *.js *.npz *.bin *.rst
+recursive-include tools *.py

@@ -21,7 +21,7 @@ shutil.copyfile(root/'bindings/packet_decoders.js', out/'packet_decoders.js')
 for name in ('COPYING', 'COPYING.LESSER'):
     shutil.copyfile(root/name, out/name)
 try:
-    revision = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
+    revision = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True, stderr=subprocess.DEVNULL).strip()
 except (OSError, subprocess.CalledProcessError):
     revision = None
 (out/'source.json').write_text(json.dumps({'revision':revision, 'license':'LGPL-3.0-or-later'}, indent=2)+'\n')
