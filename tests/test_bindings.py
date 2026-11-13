@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.environ.get('EPD_PYTHON_DIR', str(ROOT/'python')))
 from espargos_packet_decoders import wifi, ble
 from test_ble_qualify import waveform
+from test_wifi_qualify import colored_ofdm_iq
 
 class BindingTests(unittest.TestCase):
     def test_host_wasm_parity(self):
@@ -29,6 +30,9 @@ class BindingTests(unittest.TestCase):
                     if decoded:
                         stage = 'native_dsss' if decoded['phy'] == 1 else 'native_ofdm'
                         cases.append(dict(kind='wifi', iq=iq.tolist(), options=dict(stage=stage, training_hint=decoded['training_start']), name=name+' training'))
+        for rate, snr, seed in [(6,8,1), (12,14,4), (24,20,3)]:
+            cases.append(dict(kind='wifi', iq=colored_ofdm_iq(rate,snr,seed).tolist(),
+                              options={}, name=f'noise-weighted retry {rate}'))
         for rate in (4_000_000, 8_000_000, 16_000_000):
             for phy in (0, 1):
                 if phy == 1 and rate == 4_000_000:

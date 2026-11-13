@@ -18,6 +18,8 @@ typedef struct {
 } channel_t;
 typedef struct {
     bool native_header_only, extended_only;
+    const float *ofdm_soft;
+    float ofdm_weight_scale;
     unsigned dsss_payload_start;
     bool dsss_pbcc;
     int16_t i[MAX_WORDS], q[MAX_WORDS];
@@ -164,13 +166,22 @@ static void deinterleave(const int16_t *in, int16_t *out, unsigned cbps, unsigne
 
 static void equalized(workspace_t *w, unsigned start, unsigned origin, float omega,
                       const channel_t *channel, unsigned pilot_index, cf *out, float *weights) {
-    symbol(w, start, origin, omega, out);
+    if (w->ofdm_soft) {
+        unsigned index = (start-origin-144)/80;
+        const float *input = w->ofdm_soft + index*64*3;
+        for (unsigned k = 0; k < 64; k++) {
+            out[k] = (cf){input[k*3], input[k*3+1]};
+            weights[k] = input[k*3+2]*w->ofdm_weight_scale;
+        }
+    } else {
+        symbol(w, start, origin, omega, out);
+        for (unsigned k = 0; k < 64; k++) {
+            weights[k] = channel->weights[k];
+            out[k] = mul(out[k], channel->inverse[k]);
+        }
+    }
     const int pilots[4] = {-21, -7, 7, 21};
     cf pilot = {0, 0};
-    for (unsigned k = 0; k < 64; k++) {
-        weights[k] = channel->weights[k];
-        out[k] = mul(out[k], channel->inverse[k]);
-    }
     for (unsigned n = 0; n < 4; n++) {
         unsigned bin = (pilots[n] + 64) % 64;
         cf value = out[bin];
@@ -342,6 +353,37 @@ static void legacy_prefix(workspace_t *w, unsigned count, unsigned t, float omeg
     prefix(packet, payload, bytes, complete && bytes == packet->length_bytes);
 }
 
+/* A complete failed payload may be dominated by colored interference.
+ * Estimate each tone's noise from the difference of the two repeated L-LTFs.
+ * One difference is a noisy estimate: retain the band-average floor instead
+ * of promoting tones whose difference happened to be small. Successful and
+ * truncated decodes keep the original fast path and evidence unchanged. */
+static void legacy_noise_retry(workspace_t *w, unsigned count, unsigned t, float omega,
+                               channel_t *channel, epd_wifi_packet_t *packet) {
+    if (w->ofdm_soft || !packet->crc_checked || packet->crc_valid) return;
+    cf first[64], second[64];
+    float noise[64], mean = 0;
+    unsigned active = 0;
+    symbol(w, t, t, omega, first);
+    symbol(w, t + 64, t, omega, second);
+    for (unsigned k = 0; k < 64; k++) {
+        noise[k] = .5f * power((cf){first[k].r-second[k].r, first[k].i-second[k].i});
+        if (wifi_ltf_sign[(k+32)%64]) { mean += noise[k]; active++; }
+    }
+    mean = fmaxf(64.0f / 6, mean / active);
+    float maximum = 1e-20f;
+    for (unsigned k = 0; k < 64; k++) {
+        channel->weights[k] *= mean / fmaxf(mean, noise[k]);
+        maximum = fmaxf(maximum, channel->weights[k]);
+    }
+    for (unsigned k = 0; k < 64; k++) channel->weights[k] /= maximum;
+    epd_wifi_packet_t retry = *packet;
+    legacy_prefix(w, count, t, omega, channel, &retry);
+    // Preserve the original header, timing and failure verdict unless the
+    // complete payload passes its own CRC. No extra header search is made.
+    if (retry.crc_checked && retry.crc_valid) *packet = retry;
+}
+
 static bool ofdm_header(workspace_t *w, unsigned count, unsigned t, float omega,
                         epd_wifi_packet_t *p) {
     if (t + 208 > count)
@@ -350,23 +392,25 @@ static bool ofdm_header(workspace_t *w, unsigned count, unsigned t, float omega,
     cf second[64], bins[64];
     float weights[64];
     int16_t soft[48];
-    symbol(w, t, t, omega, channel.inverse);
-    symbol(w, t + 64, t, omega, second);
-    float maximum = 1;
-    for (unsigned k = 0; k < 64; k++) {
-        float sign = wifi_ltf_sign[(k + 32) % 64];
-        cf h = {(channel.inverse[k].r + second[k].r) * .5f * sign,
-                (channel.inverse[k].i + second[k].i) * .5f * sign};
-        channel.weights[k] = power(h);
-        if (channel.weights[k] > maximum)
-            maximum = channel.weights[k];
-        float denominator = channel.weights[k] > 1 ? channel.weights[k] : 1;
-        channel.inverse[k] = (cf){h.r / denominator, -h.i / denominator};
+    if (!w->ofdm_soft) {
+        symbol(w, t, t, omega, channel.inverse);
+        symbol(w, t + 64, t, omega, second);
+        float maximum = 1;
+        for (unsigned k = 0; k < 64; k++) {
+            float sign = wifi_ltf_sign[(k + 32) % 64];
+            cf h = {(channel.inverse[k].r + second[k].r) * .5f * sign,
+                    (channel.inverse[k].i + second[k].i) * .5f * sign};
+            channel.weights[k] = power(h);
+            if (channel.weights[k] > maximum)
+                maximum = channel.weights[k];
+            float denominator = channel.weights[k] > 1 ? channel.weights[k] : 1;
+            channel.inverse[k] = (cf){h.r / denominator, -h.i / denominator};
+        }
+        /* Channel inversion is shared by every symbol of this packet. Software
+         * float division is expensive on C61; do it once per subcarrier. */
+        for (unsigned k = 0; k < 64; k++)
+            channel.weights[k] /= maximum;
     }
-    /* Channel inversion is shared by every symbol of this packet. Software
-     * float division is expensive on C61; do it once per subcarrier. */
-    for (unsigned k = 0; k < 64; k++)
-        channel.weights[k] /= maximum;
     equalized(w, t + 144, t, omega, &channel, 0, bins, weights);
     bpsk_soft(bins, weights, false, soft);
     deinterleave(soft, w->llr, 48, 1);
@@ -447,7 +491,40 @@ static bool ofdm_header(workspace_t *w, unsigned count, unsigned t, float omega,
     }
     if (w->extended_only) return false;
     legacy_prefix(w, count, t, omega, &channel, p);
+    legacy_noise_retry(w, count, t, omega, &channel, p);
     return true;
+}
+
+/* Equalized OFDM observations are sufficient statistics after MRC under
+ * independent Gaussian branch noise: z=sum(conj(h)y/N)/sum(|h|^2/N), with
+ * inverse variance gamma=sum(|h|^2/N). Preserve gamma through soft decoding
+ * instead of synthesizing IQ with a fictitious unit channel. */
+bool epd_wifi_decode_ofdm(const float *symbols, unsigned count, void *scratch,
+                          epd_wifi_packet_t *packet) {
+    if (!symbols || !scratch || !packet || !count || count > EPD_WIFI_OFDM_MAX_SYMBOLS)
+        return false;
+    *packet = (epd_wifi_packet_t){0};
+    float maximum = 0;
+    for (unsigned n = 0; n < count*64; n++) {
+        float re = symbols[n*3], im = symbols[n*3+1], weight = symbols[n*3+2];
+        if (!isfinite(re) || !isfinite(im) || !isfinite(weight) || weight < 0 ||
+            fabsf(re) > 1e6f || fabsf(im) > 1e6f) return false;
+        if (wifi_ltf_sign[(n%64+32)%64]) maximum = fmaxf(maximum, weight);
+    }
+    if (!(maximum > 0) || !isfinite(1/maximum)) return false;
+    workspace_t *w = scratch;
+    w->ofdm_soft = symbols;
+    w->ofdm_weight_scale = 1/maximum;
+    w->native_header_only = w->extended_only = false;
+    bool valid = ofdm_header(w, 128+count*80, 0, 0, packet);
+    w->ofdm_soft = NULL;
+    // This API decodes already-associated symbols; it does not assert that
+    // an L-LTF, absolute sample origin or CFO was observed in this input.
+    if (valid) {
+        packet->frame_start = packet->training_start = UINT16_MAX;
+        packet->training_words = 0;
+    }
+    return valid;
 }
 
 static float ltf_score(workspace_t *w, unsigned t, int64_t e) {
@@ -929,6 +1006,7 @@ static bool qualify(const uint32_t *ring, uint32_t capacity, uint32_t offset, ui
         words > capacity || words < 128)
         return false;
     workspace_t *w = scratch;
+    w->ofdm_soft = NULL;
     w->native_header_only = native_header_only;
     w->extended_only = extended_only;
     *packet = (epd_wifi_packet_t){0};
@@ -1052,6 +1130,7 @@ bool epd_wifi_qualify_extended_at(const uint32_t *samples, uint32_t words,
     workspace_t *w = scratch;
     unsigned start = training->training_start;
     float omega = training->cfo_hz * (2 * PI / 20000000);
+    w->ofdm_soft = NULL;
     w->native_header_only = false;
     w->extended_only = true;
     for (unsigned n = 0; n < words; n++) {
@@ -1183,6 +1262,7 @@ bool epd_wifi_qualify_dsss_training(const uint32_t *samples, unsigned words, int
                                   void *scratch, epd_wifi_packet_t *packet) {
     if (!epd_wifi_qualify_native(samples, words, true, hint, scratch, packet)) return false;
     double matched = 0, total = 0, template_power = 0;
+    int64_t sum_i = 0, sum_q = 0;
     for (unsigned k = 0; k < 20; k++) template_power += wifi_barker20[k] * wifi_barker20[k];
     for (unsigned s = 0; s < packet->training_words; s += 20) {
         double r = 0, q = 0, energy = 0;
@@ -1190,11 +1270,17 @@ bool epd_wifi_qualify_dsss_training(const uint32_t *samples, unsigned words, int
             uint32_t raw = samples[packet->training_start + s + k];
             int i = (int)((raw & 1023) ^ 512) - 512;
             int j = (int)(((raw >> 10) & 1023) ^ 512) - 512;
+            sum_i += i; sum_q += j;
             r += i * wifi_barker20[k]; q += j * wifi_barker20[k];
             energy += i*i + j*j;
         }
         matched += r*r + q*q;
         total += energy * template_power;
     }
+    /* The zero-sum Barker template removes DC in the numerator. Normalize
+     * against AC energy as well: high receiver gain can produce a large DC
+     * offset which is not evidence against otherwise valid training. */
+    total -= ((double)sum_i * sum_i + (double)sum_q * sum_q) *
+             template_power / packet->training_words;
     return total > 0 && matched > .55 * total;
 }

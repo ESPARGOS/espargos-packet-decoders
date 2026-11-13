@@ -12,3 +12,6 @@ int epd_decode_wifi(const uint32_t *iq, unsigned words, unsigned stage, int hint
                     void *workspace, uint32_t result[EPD_RESULT_WORDS]);
 int epd_decode_ble(const uint32_t *iq, unsigned words, unsigned rate, unsigned phy,
                    unsigned channel, void *workspace, uint32_t result[EPD_RESULT_WORDS]);
+
+int epd_decode_wifi_ofdm(const float *symbols, unsigned count, void *workspace,
+                         uint32_t result[EPD_RESULT_WORDS]);

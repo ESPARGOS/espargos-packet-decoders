@@ -18,7 +18,7 @@ class PacketDecoders {
         }
     }
     destroy() {
-        for (const key of ['iq', 'work', 'result', 'symbols']) {
+        for (const key of ['iq', 'work', 'result', 'symbols', 'ofdm']) {
             if (this[key]) this.module._free(this[key]);
             this[key] = 0;
         }
@@ -31,7 +31,11 @@ class PacketDecoders {
         m.HEAPU32.set(iq, this.iq / 4);
         const valid = kind === 0 ? m._epd_decode_wifi(this.iq, iq.length, a, b, this.work, this.result)
             : m._epd_decode_ble(this.iq, iq.length, a, b, c, this.work, this.result);
+        return this.readResult(valid);
+    }
+    readResult(valid) {
         if (!valid) return null;
+        const m = this.module;
         const r = m.HEAPU32.subarray(this.result / 4, this.result / 4 + 26);
         if (r[0] !== 1) throw Error('Unsupported decoder ABI');
         const bytes = m.HEAPU8;
@@ -49,6 +53,21 @@ class PacketDecoders {
         const stages = {full:0, training:1, extended_header:2, native_ofdm:3, native_dsss:4};
         if (!(stage in stages)) throw RangeError('Unknown WiFi decoder stage');
         return this.decode(iq, 0, stages[stage], training_hint);
+    }
+    wifiOfdm(symbols) {
+        if (!this.work) throw Error('Decoder has been destroyed');
+        if (!(symbols instanceof Float32Array) || !symbols.length || symbols.length%192 || symbols.length>200*192)
+            throw RangeError('Expected 1..200 OFDM symbols of 64 (I,Q,inverse-variance) triples');
+        const m = this.module;
+        if (!(this.ofdmCapacity >= symbols.byteLength)) {
+            const next = m._malloc(symbols.byteLength);
+            if (!next) throw Error('Cannot allocate OFDM symbol input');
+            if (this.ofdm) m._free(this.ofdm);
+            this.ofdm = next;
+            this.ofdmCapacity = symbols.byteLength;
+        }
+        new Float32Array(m.HEAPU8.buffer,this.ofdm,symbols.length).set(symbols);
+        return this.readResult(m._epd_decode_wifi_ofdm(this.ofdm,symbols.length/192,this.work,this.result));
     }
     ble(iq, {sample_rate = 4000000, phy = 0, channel = 37} = {}) {
         return this.decode(iq, 1, sample_rate, phy, channel);

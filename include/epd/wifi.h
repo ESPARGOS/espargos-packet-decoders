@@ -65,3 +65,15 @@ unsigned epd_wifi_dsss_symbols(const uint32_t *samples, unsigned words, unsigned
  * (native_dsss alone relies on the modem's packet verdict). */
 bool epd_wifi_qualify_dsss_training(const uint32_t *samples, unsigned words, int hint,
                                   void *scratch, epd_wifi_packet_t *packet);
+
+/* Decode associated, equalized OFDM symbols without re-quantizing into IQ.
+ * Each symbol has 64 FFT-order triples (real, imaginary, inverse noise variance).
+ * The first symbol is L-SIG, followed by the consecutive 80-sample legacy
+ * symbols (including HT-SIG when present). Pilots retain their transmitted
+ * polarity; residual common phase is tracked by the decoder. Zero weight is
+ * an erasure. All triples must be finite; |real| and |imaginary| <= 1e6.
+ * Relative weights share one scale across the whole packet. This API validates
+ * headers/FCS but supplies no training, timing or CFO evidence. */
+#define EPD_WIFI_OFDM_MAX_SYMBOLS 200u
+bool epd_wifi_decode_ofdm(const float *symbols, unsigned count, void *workspace,
+                          epd_wifi_packet_t *packet);
