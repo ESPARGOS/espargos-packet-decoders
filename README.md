@@ -21,6 +21,8 @@ to the application. See the sample format below.
 * **802.11b:** DSSS and CCK at 1, 2, 5.5 and 11 Mbps, with long or short preambles.
 * **802.11a/g (OFDM):** 20 MHz WiFi at 6–54 Mbps.
 * **802.11n:** legacy training and HT-SIG. HT payload decoding is not implemented.
+* **802.11ax:** HE SU HE-SIG-A, including stream count and modulation parameters.
+  HE payload decoding is not implemented in the shared C library.
 * **Bluetooth LE:** LE1M and LE2M packets. LE Coded support currently stops at
   preamble detection.
 
@@ -156,3 +158,22 @@ results. `tools/wifi_ppdu.py` contains the WiFi waveform generator.
 ## License
 
 LGPL-3.0-or-later. See `COPYING.LESSER` and `COPYING`.
+
+### 802.11ax signaling
+
+HE SU HE-SIG-A is decoded from 20 MSa/s IQ or equalized pre-HE OFDM symbols.
+A validated result has `phy=4`, `mcs`, `stbc`, and a seven-byte packed HE-SIG-A
+`prefix` (52 bits, LSB first). Python/JavaScript additionally return `he` with
+bandwidth, spatial/space-time stream counts, LTF size, guard interval, BSS color,
+DCM, Doppler and LDPC indicators. All one-to-eight stream counts and MCS 0–11
+can be reported. Illegal STBC/DCM stream combinations are rejected. The joint
+DCM/STBC encoding for 4x HE-LTF with 0.8 µs GI is exposed with both actual
+features disabled and the correct spatial stream count. `length_bytes` and `rate_half_mbps` are zero: L-SIG LENGTH
+encodes protection time, not HE PSDU length. `duration_us` is that legacy
+protection duration. Header CRC validation does not assert payload FCS validity.
+
+HE payload FEC/MAC decoding is not implemented here. MU, TB and ER SU formats,
+and incomplete or invalid HE-SIG-A, retain the generic extended-OFDM result.
+The ESPARGOS browser separately provides HE SU20 MIMO soft-symbol equalization.
+`tools/wifi_he.py` generates signaling/training and known uncoded payload
+symbols for demodulation tests; those payloads are not valid MAC frames.

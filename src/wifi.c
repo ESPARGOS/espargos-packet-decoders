@@ -384,11 +384,85 @@ static void legacy_noise_retry(workspace_t *w, unsigned count, unsigned t, float
     if (retry.crc_checked && retry.crc_valid) *packet = retry;
 }
 
+/* HE-SIG-A uses 52 data tones, the 13-column BCC interleaver and the
+ * first four transmitted bits of the HT CRC generator (42 protected bits).
+ * Keep an unverified/truncated repeated L-SIG as EXTENDED_OFDM. */
+static bool he_su_header(workspace_t *w, unsigned count, unsigned t, float omega,
+                         channel_t channel, epd_wifi_packet_t *p) {
+    if (p->rate_half_mbps != 12 || p->length_bytes % 3 != 1 || t + 448 > count)
+        return false;
+    cf bins[64];
+    float weights[64];
+    if (!w->ofdm_soft) {
+        /* L-LTF has no edge tones. HE L-SIG and RL-SIG supply them; use
+         * RL-SIG here to retain the phase reference closest to HE-SIG-A. */
+        symbol(w, t + 224, t, omega, bins);
+        static const int edge[4] = {-28, -27, 27, 28};
+        float maximum = 1;
+        cf ltf[64];
+        symbol(w, t, t, omega, ltf);
+        for (int k = -26; k <= 26; k++)
+            if (k) maximum = fmaxf(maximum, power(ltf[(k + 64) % 64]));
+        for (unsigned j = 0; j < 4; j++) {
+            unsigned k = (edge[j] + 64) % 64;
+            float sign = j == 3 ? 1 : -1;
+            cf h = {bins[k].r * sign, bins[k].i * sign};
+            float energy = power(h);
+            channel.weights[k] = energy / maximum;
+            channel.inverse[k] = (cf){h.r / fmaxf(energy, 1), -h.i / fmaxf(energy, 1)};
+        }
+    }
+    float real_energy = 0, imag_energy = 0;
+    for (unsigned s = 0; s < 2; s++) {
+        equalized(w, t + 304 + s * 80, t, omega, &channel, s + 2, bins, weights);
+        unsigned j = 0;
+        for (int k = -28; k <= 28; k++) {
+            if (!k || k == -21 || k == -7 || k == 7 || k == 21) continue;
+            unsigned b = (k + 64) % 64;
+            real_energy += bins[b].r * bins[b].r * weights[b];
+            imag_energy += bins[b].i * bins[b].i * weights[b];
+            w->llr[52 * s + 13 * (j % 4) + j / 4] = soft_limit(bins[b].r * weights[b] * 1024);
+            j++;
+        }
+    }
+    viterbi(w, 52, true);
+    unsigned crc = 255;
+    for (unsigned n = 0; n < 42; n++) {
+        unsigned feedback = ((crc >> 7) & 1) ^ w->bits[n];
+        crc = ((crc << 1) & 255) ^ (feedback ? 7 : 0);
+    }
+    for (unsigned n = 0; n < 4; n++)
+        if (w->bits[42 + n] != (((crc >> (7 - n)) & 1) ^ 1)) return false;
+    /* Format=SU, reserved bits, MCS and terminated trellis. These checks
+     * matter because the four-bit header CRC alone is weak. */
+    if (real_energy <= 2 * imag_energy || !w->bits[0] || !w->bits[14] ||
+        !w->bits[40] || bit_value(w->bits + 3, 4) > 11 || bit_value(w->bits + 46, 6))
+        return false;
+    unsigned mcs = bit_value(w->bits + 3, 4);
+    unsigned nsts = bit_value(w->bits + 23, w->bits[41] ? 2 : 3) + 1;
+    /* DCM=STBC=1 jointly selects 4x LTF / 0.8 us GI, not data STBC/DCM.
+     * Otherwise HE STBC is one data stream over two space-time streams. */
+    bool short_4x = bit_value(w->bits + 21, 2) == 3 && w->bits[7] && w->bits[35];
+    if (!short_4x && ((w->bits[35] && nsts != 2) ||
+        (w->bits[7] && (w->bits[35] || nsts > 2 ||
+                       (mcs != 0 && mcs != 1 && mcs != 3 && mcs != 4))))) return false;
+    p->phy = EPD_WIFI_PHY_HE_SU;
+    p->mcs = mcs;
+    p->stbc = !short_4x && w->bits[35];
+    p->rate_half_mbps = 0;
+    p->duration_us = 20 + 4 * ((p->length_bytes + 5) / 3);
+    p->length_bytes = 0; /* L-SIG LENGTH is duration spoofing, not PSDU bytes. */
+    p->prefix_length = 7;
+    for (unsigned n = 0; n < 6; n++) p->prefix[n] = bit_value(w->bits + 8 * n, 8);
+    p->prefix[6] = bit_value(w->bits + 48, 4);
+    return true;
+}
+
 static bool ofdm_header(workspace_t *w, unsigned count, unsigned t, float omega,
                         epd_wifi_packet_t *p) {
     if (t + 208 > count)
         return false;
-    channel_t channel;
+    channel_t channel = {0};
     cf second[64], bins[64];
     float weights[64];
     int16_t soft[48];
@@ -459,6 +533,7 @@ static bool ofdm_header(workspace_t *w, unsigned count, unsigned t, float omega,
             /* HE's repeated L-SIG is not a legacy MAC payload. Its common
              * training remains useful even without decoding HE-SIG/payload. */
             p->phy = EPD_WIFI_PHY_EXTENDED_OFDM;
+            he_su_header(w, count, t, omega, channel, p);
             return true;
         }
         float real_energy = 0, rotated_energy = 0;

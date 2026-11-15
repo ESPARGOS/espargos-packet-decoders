@@ -43,11 +43,20 @@ class PacketDecoders {
             crc_checked:!!(r[12]&2), crc_valid:!!(r[12]&4),
             prefix:bytes.slice(this.result+64,this.result+64+r[13]),
             access_address:r[14], packet_crc:r[15]};
-        return {protocol:'wifi', phy:r[1], rate_half_mbps:r[2], mcs:r[3], stbc:r[4], frame_start:r[5],
+        const packet = {protocol:'wifi', phy:r[1], rate_half_mbps:r[2], mcs:r[3], stbc:r[4], frame_start:r[5],
             training_start:r[6], training_words:r[7], length_bytes:r[8], duration_us:r[9],
             cfo_hz:r[10]|0, quality:r[11], mac_valid:!!(r[12]&1), crc_checked:!!(r[12]&2),
             crc_valid:!!(r[12]&4), prefix:bytes.slice(this.result+64,this.result+64+r[13]),
             transmitter:bytes.slice(this.result+96,this.result+102)};
+        if (packet.phy === 4 && packet.prefix.length === 7) {
+            const bit = (start, n=1) => {let v=0;for(let i=0;i<n;i++)v|=((packet.prefix[(start+i)>>3]>>((start+i)&7))&1)<<i;return v;};
+            const nsts=bit(23,bit(41)?2:3)+1, cp=bit(21,2), special=cp===3&&bit(7)&&bit(35);
+            packet.he={format:'SU',bandwidth_mhz:20*(1<<bit(19,2)),space_time_streams:nsts,
+                spatial_streams:bit(35)&&!special?nsts/2:nsts,ltf_size:[1,2,2,4][cp],
+                guard_interval_ns:special?800:[800,800,1600,3200][cp],
+                bss_color:bit(8,6),dcm:!special&&!!bit(7),doppler:!!bit(41),ldpc:!!bit(33)};
+        }
+        return packet;
     }
     static integer(value, name, low, high) {
         if (typeof value !== 'number') throw TypeError(name + ' must be an integer');

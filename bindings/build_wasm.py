@@ -3,6 +3,7 @@
 """Build browser/Node artifacts with Emscripten; output directory is the argument."""
 from pathlib import Path
 import json
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -24,4 +25,12 @@ try:
     revision = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True, stderr=subprocess.DEVNULL).strip()
 except (OSError, subprocess.CalledProcessError):
     revision = None
-(out/'source.json').write_text(json.dumps({'revision':revision, 'license':'LGPL-3.0-or-later'}, indent=2)+'\n')
+inputs = sorted([*root.glob('src/*'), *root.glob('include/epd/*'),
+                 root/'bindings/bridge.c', root/'bindings/bridge.h',
+                 root/'bindings/packet_decoders.js', Path(__file__).resolve()])
+digest = hashlib.sha256()
+for file in inputs:
+    if file.is_file():
+        digest.update(str(file.relative_to(root)).encode()+b'\0'+file.read_bytes()+b'\0')
+(out/'source.json').write_text(json.dumps({'revision':revision, 'source_sha256':digest.hexdigest(),
+                                         'license':'LGPL-3.0-or-later'}, indent=2)+'\n')

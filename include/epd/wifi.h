@@ -22,7 +22,8 @@ enum {
     EPD_WIFI_PHY_OFDM = 0,
     EPD_WIFI_PHY_DSSS = 1,
     EPD_WIFI_PHY_HT = 2,
-    EPD_WIFI_PHY_EXTENDED_OFDM = 3
+    EPD_WIFI_PHY_EXTENDED_OFDM = 3,
+    EPD_WIFI_PHY_HE_SU = 4
 };
 
 /* Offsets refer to the supplied, chronologically ordered capture window.
@@ -30,7 +31,11 @@ enum {
  * means no training was established. cfo_hz is in Hz; duration_us in us;
  * rate_half_mbps is in units of 0.5 Mbps. Only prefix_length bytes of prefix
  * are meaningful; transmitter requires mac_valid. crc_valid requires
- * crc_checked. A decoded prefix does not imply a verified whole-frame FCS. */
+ * crc_checked. A decoded prefix does not imply a verified whole-frame FCS.
+ * HE_SU returns the 52 HE-SIG-A bits in seven prefix bytes, LSB first (the
+ * final four padding bits are zero). mcs/stbc describe HE, length_bytes and
+ * rate_half_mbps are zero, and duration_us is the legacy protection duration.
+ * HE-SIG-A CRC validation does not set the payload crc_checked/crc_valid. */
 typedef struct {
     uint16_t frame_start, training_start, training_words, length_bytes;
     uint16_t duration_us;
@@ -59,7 +64,8 @@ bool epd_wifi_qualify_native(const uint32_t *samples, uint32_t words, bool dsss,
 bool epd_wifi_qualify_ofdm_training(const uint32_t *samples, uint32_t words,
                                        void *scratch, epd_wifi_packet_t *packet);
 
-/* Validate HT-SIG/repeated L-SIG without decoding a legacy MAC payload. */
+/* Validate HT-SIG, repeated L-SIG and HE SU HE-SIG-A without decoding a
+ * legacy MAC payload. Truncated/unsupported HE remains EXTENDED_OFDM. */
 bool epd_wifi_qualify_extended_header(const uint32_t *samples, uint32_t words,
                                          void *scratch, epd_wifi_packet_t *packet);
 

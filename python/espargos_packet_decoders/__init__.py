@@ -50,13 +50,27 @@ def _result(raw):
         return dict(protocol='ble', phy=v[1]-100, identity_valid=bool(v[12]&1),
                     crc_checked=bool(v[12]&2), crc_valid=bool(v[12]&4),
                     prefix=raw[64:64+v[13]], access_address=v[14], packet_crc=v[15])
-    return dict(protocol='wifi', phy=v[1], rate_half_mbps=v[2], mcs=v[3], stbc=v[4],
+    packet = dict(protocol='wifi', phy=v[1], rate_half_mbps=v[2], mcs=v[3], stbc=v[4],
                 frame_start=v[5], training_start=v[6], training_words=v[7],
                 length_bytes=v[8], duration_us=v[9],
                 cfo_hz=struct.unpack('=i', raw[40:44])[0], quality=v[11],
                 mac_valid=bool(v[12]&1), crc_checked=bool(v[12]&2), crc_valid=bool(v[12]&4),
                 prefix=raw[64:64+v[13]],
                 transmitter=raw[96:102])
+    if packet['phy'] == 4 and len(packet['prefix']) == 7:
+        bits = int.from_bytes(packet['prefix'], 'little')
+        def bit(start, count=1):
+            return (bits >> start) & ((1 << count)-1)
+        nsts = bit(23, 2 if bit(41) else 3)+1
+        cp = bit(21, 2)
+        special = cp == 3 and bit(7) and bit(35)
+        packet['he'] = dict(format='SU', bandwidth_mhz=20*(1 << bit(19, 2)),
+            space_time_streams=nsts, spatial_streams=nsts//2 if bit(35) and not special else nsts,
+            ltf_size=[1, 2, 2, 4][cp],
+            guard_interval_ns=800 if special else [800, 800, 1600, 3200][cp],
+            bss_color=bit(8, 6), dcm=bool(bit(7)) and not special, doppler=bool(bit(41)), ldpc=bool(bit(33)))
+    return packet
+
 
 def wifi(iq, *, stage='full', training_hint=0):
     """Return a partial/complete decoded result, or None when qualification fails."""
