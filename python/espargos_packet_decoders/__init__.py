@@ -11,6 +11,7 @@ import operator
 from numbers import Real
 import struct
 from . import _native
+from ._native import spatial_layout, spatial_decode
 
 STAGES = {'full': 0, 'training': 1, 'extended_header': 2,
           'native_ofdm': 3, 'native_dsss': 4}

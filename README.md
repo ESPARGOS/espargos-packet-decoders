@@ -174,6 +174,12 @@ protection duration. Header CRC validation does not assert payload FCS validity.
 
 HE payload FEC/MAC decoding is not implemented here. MU, TB and ER SU formats,
 and incomplete or invalid HE-SIG-A, retain the generic extended-OFDM result.
-The ESPARGOS browser separately provides HE SU20 MIMO soft-symbol equalization.
+The browser and Python SDK use the same host-side spatial decoder for HT20
+and HE SU20. Call `epd_spatial_layout` for the training and payload FFT
+windows relative to the first legacy LTF. Pass the aligned receiver spectra
+to `epd_spatial_decode` to recover measured per-path CSI and up to eight
+payload symbols. CSI remains available with a single receive antenna.
+Separating independent payload streams requires enough independent receive
+channels. The sensor build includes only the single-receiver packet decoder.
 `tools/wifi_he.py` generates signaling/training and known uncoded payload
 symbols for demodulation tests; those payloads are not valid MAC frames.

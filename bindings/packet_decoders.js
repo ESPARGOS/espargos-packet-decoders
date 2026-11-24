@@ -17,8 +17,91 @@ class PacketDecoders {
             throw Error('Cannot allocate decoder workspace');
         }
     }
+    // Each receiver supplies CFO/gain-corrected FFTs from its own sample grid.
+    spatial(receivers, {phy, paths, ltf, gi, alamouti = false, maxSymbols = 8}) {
+        const m = this.module;
+        if (!this.work) throw Error('Decoder has been destroyed');
+        if (!Number.isInteger(maxSymbols) || maxSymbols < 0 || maxSymbols > 8)
+            throw RangeError('Expected 0..8 payload symbols');
+        if (![phy, paths, ltf, gi].every(x => Number.isInteger(x) && x > 0 && x <= 64) || m._epd_spatial_layout(phy, paths, ltf, gi, this.result))
+            throw RangeError('Unsupported spatial training configuration');
+        const plan = m.HEAPU32.slice(this.result / 4, this.result / 4 + 9);
+        const [, , count, size, first, stride, fft, data, period] = plan;
+        const rows = [];
+        let nsym = 0;
+        for (const receiver of receivers) {
+            if (!(receiver.noise > 0) || !Number.isFinite(receiver.noise)) continue;
+            const training = Array.from({length: count}, (_, i) => receiver.fft(first + stride*i, size));
+            if (training.some(x => !x || x.length !== size)) continue;
+            const gain = receiver.gain?.();
+            const payload = [];
+            for (let i = 0; i < maxSymbols; i++) {
+                const y = receiver.fft(data + period*i, fft);
+                payload.push(y?.length === fft ? y : null);
+                if (y?.length === fft) nsym = Math.max(nsym, i + 1);
+            }
+            rows.push({training, gain, payload, ant: receiver.ant, noise: receiver.noise});
+        }
+        const streams = alamouti ? 1 : paths;
+        const channels = [], points = [], streamPoints = Array.from({length: streams}, () => []);
+        const result = {channels, points, streamPoints, antennas: rows.length, symbols: 0, rankFailures: 0, pilotFailures: 0};
+        if (!rows.length) return result;
+        const length = count*size + nsym*fft, nr = rows.length;
+        const inputBytes = 16*nr*length, channelBytes = 16*nr*fft*paths, dataBytes = 16*nsym*fft*streams;
+        const bytes = nr*8 + inputBytes + channelBytes + dataBytes + 8;
+        if (!Number.isSafeInteger(bytes) || bytes >= 0x80000000) throw RangeError('Spatial packet is too large');
+        if (bytes > (this.spatialCapacity || 0)) {
+            const ptr = m._malloc(bytes);
+            if (!ptr) throw Error('Cannot allocate spatial decoder workspace');
+            m._free(this.spatialWork || 0);
+            this.spatialWork = ptr;
+            this.spatialCapacity = bytes;
+        }
+        const noise = this.spatialWork, input = noise+nr*8, h = input+inputBytes;
+        const soft = h+channelBytes, stats = soft+dataBytes;
+        let memory = new Float64Array(m.HEAPU8.buffer);
+        for (const [r,row] of rows.entries()) {
+            memory[noise/8+r] = row.noise;
+            let i = input/8 + 2*r*length;
+            for (const spectrum of [...row.training,...row.payload.slice(0,nsym)]) {
+                if (!spectrum) { memory[i] = NaN; i += 2*fft; continue; }
+                for (const z of spectrum) { memory[i++] = z.re; memory[i++] = z.im; }
+            }
+        }
+        m.HEAPU32.set(plan, this.result / 4);
+        if (m._epd_spatial_decode(this.result,nr,nsym,+alamouti,noise,input,h,soft,stats))
+            throw Error('Spatial decoder failed');
+        memory = new Float64Array(m.HEAPU8.buffer);
+        const read = i => ({re: memory[i], im: memory[i+1]});
+        const edge = phy === 4 ? 122 : 28, spacing = 20e6/fft;
+        const pilots = phy === 4 ? [-116,-90,-48,-22,22,48,90,116] : [-21,-7,7,21];
+        for (const [r,row] of rows.entries()) {
+            const tones = [];
+            for (let k = -edge; k <= edge; k++) {
+                const i = h/8 + 2*(r*fft+(k+fft)%fft)*paths;
+                if (Number.isFinite(memory[i])) tones.push({hz:k*spacing, streams:Array.from({length:paths}, (_,s)=>read(i+2*s))});
+            }
+            channels.push({antenna:row.ant, gain:row.gain, tones});
+        }
+        for (let j = 0; j < nsym; j++) {
+            const begin = points.length;
+            for (let k = -edge; k <= edge; k++) {
+                if (pilots.includes(k)) continue;
+                const i = soft/8 + 2*(j*fft+(k+fft)%fft)*streams;
+                if (!Number.isFinite(memory[i])) continue;
+                for (let s = 0; s < streams; s++) {
+                    const point = {...read(i+2*s),stream:s,hz:k*spacing};
+                    points.push(point);
+                    streamPoints[s].push(point);
+                }
+            }
+            if (points.length > begin) result.symbols++;
+        }
+        [result.rankFailures,result.pilotFailures] = m.HEAPU32.subarray(stats/4,stats/4+2);
+        return result;
+    }
     destroy() {
-        for (const key of ['iq', 'work', 'result', 'symbols', 'ofdm']) {
+        for (const key of ['iq', 'work', 'result', 'symbols', 'ofdm', 'spatialWork']) {
             if (this[key]) this.module._free(this[key]);
             this[key] = 0;
         }
